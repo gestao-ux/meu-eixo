@@ -24,7 +24,7 @@ function diasEntre(a,b){ return Math.round((Date.parse(b+'T12:00:00Z')-Date.pars
 function parseValor(s){ if(typeof s==='number') return s; s=String(s||'').trim().replace(/[R$\s]/g,''); if(!s) return NaN;
   if(!s.includes(',') && /^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
   if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.'); const n=Number(s); return isFinite(n)?n:NaN; }
-const fmtInput = v => (v===undefined||v===null||v==='') ? '' : String(r2(v)).replace('.',',');
+const fmtInput = v => (v===undefined||v===null||v==='') ? '' : r2(v).toFixed(2).replace('.',',');
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const ls = { get(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(_){} }, del(k){ try{ localStorage.removeItem(k); }catch(_){} } };
 
@@ -56,8 +56,8 @@ const NAV = [
   {id:'financeiro',t:'Financeiro',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
   {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
   {id:'alimentacao',t:'Alimentação',ic:'M7 3v8a3 3 0 0 0 3 3v7M7 3v5M10 3v5M17 3c-2 2-2 6 0 8v10'},
-  {id:'cardapios',t:'Cardápios e marmitas',ic:'M4 9h16v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3zM8 9V6h8v3',soon:6},
-  {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',soon:8},
+  {id:'cardapios',t:'Cardápios e marmitas',ic:'M4 9h16v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3zM8 9V6h8v3'},
+  {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01'},
   {id:'despensa',t:'Despensa e estoque',ic:'M4 4h16v6H4zM4 10h16v10H4zM10 14h4',soon:8},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
   {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01',soon:10},
@@ -182,7 +182,10 @@ async function abrirEspaco(id){
   tabs.forEach((t,i)=>aplicar(t,res[i]));
   S.canal=sb.channel('espaco-'+id);
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
+  S.canal.on('postgres_changes',{event:'*',schema:'public',table:'planos_alimentares',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
+  S.canal.on('postgres_changes',{event:'*',schema:'public',table:'listas_compra',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
   S.canal.subscribe();
+  S.planos=undefined; carregarAlimentacaoEspaco();
   S.fase='pronto'; render();
 }
 async function entrar(session){
@@ -195,7 +198,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -220,8 +223,8 @@ function render(){
   renderNav();
   const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
   $('#monthNav').hidden = S.view==='config' || S.view==='alimentacao';
-  document.querySelector('.fab').hidden = S.view==='alimentacao';
-  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao};
+  document.querySelector('.fab').hidden = ['alimentacao','cardapios','compras'].includes(S.view);
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao,cardapios:vCardapios,compras:vCompras};
   v.innerHTML = (views[S.view]||vRoadmap)();
   ls.set('meuEixo.view',S.view);
   if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
@@ -1062,7 +1065,204 @@ const acoesAl = {
 };
 const r1 = v => Math.round(v*10)/10;
 
-Object.assign(acoes, acoesAl);
+/* ---------- cardápio e marmitas ---------- */
+const CD = () => window.MeuEixoCardapio;
+const DIAS_SEM = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
+const DIAS_CURTO = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
+const NOME_REF = {cafe:'Café da manhã',lanche_manha:'Lanche da manhã',almoco:'Almoço',lanche_tarde:'Lanche da tarde',jantar:'Jantar',ceia:'Ceia'};
+const GRUPO_NOME = {proteina:'Proteínas',carbo:'Arroz, massas e tubérculos',leguminosa:'Feijões e grãos',paes:'Pães, aveia e tapioca',laticinio:'Leite e derivados',legume:'Legumes',salada:'Verduras e saladas',fruta:'Frutas',gordura:'Óleos'};
+async function carregarAlimentacaoEspaco(){
+  const id=S.esp;
+  try{
+    const pl=chk(await sb.from('planos_alimentares').select('mes,dados,atualizado_em').eq('espaco_id',id));
+    const li=chk(await sb.from('listas_compra').select('chave,itens').eq('espaco_id',id));
+    if(S.esp!==id) return;
+    S.planos=Object.fromEntries(pl.map(x=>[x.mes,x.dados])); S.listas=Object.fromEntries(li.map(x=>[x.chave,x.itens||{}])); S.alErro4=false;
+  }catch(e){ console.error(e); S.planos={}; S.listas={}; S.alErro4=true; }
+  schedule();
+}
+function ctxDoPerfil(){
+  const p=S.perfilAl; if(!p) return null; const c=N().calcular(p,hoje()); if(!c) return null;
+  return {porRefeicao:c.porRefeicao, meta:c.meta, prot:c.prot, alergias:p.alergias||[], estilo:p.estilo, pessoas:p.pessoas||1, freezer:p.freezer, diasPreparo:p.diasPreparo||['dom'], marmitaLocal:p.marmitaLocal, horarios:p.horarios||{}, gosta:p.gosta||[], naoGosta:p.naoGosta||[], precoMarmita:p.precoMarmita||null, marmitasSemana:p.marmitasSemana||null, orcamento:p.orcamento||null};
+}
+const planoMes = () => S.planos?.[S.mes] || null;
+async function salvarPlano(dados){ chk(await sb.from('planos_alimentares').upsert({espaco_id:S.esp,mes:S.mes,dados,atualizado_em:new Date().toISOString()},{onConflict:'espaco_id,mes'})); S.planos={...S.planos,[S.mes]:dados}; render(); }
+const calcDe = pl => ({porRefeicao:pl.ctx.porRefeicao, meta:pl.ctx.meta, prot:pl.ctx.prot});
+const perfDe = pl => pl.ctx;
+const diaHoje = () => (new Date(hoje()+'T12:00:00').getDay()+6)%7;
+const kc = v => Math.round(v).toLocaleString('pt-BR');
+
+function vCardapios(){
+  if(S.alErro4) return `<div class="empty"><strong>O cardápio precisa de uma atualização no banco</strong>No Supabase, execute o arquivo <b>004_cardapio_compras.sql</b> no SQL Editor e recarregue a página.</div>`;
+  if(S.planos===undefined || S.perfilAl===undefined) return `<div class="empty"><strong>Carregando o cardápio…</strong></div>`;
+  const pl=planoMes();
+  if(!pl){
+    if(!S.perfilAl) return `<div class="intro-al"><span class="eyebrow">Cardápios e marmitas</span><h2>Primeiro, o seu perfil alimentar</h2><p>O cardápio usa suas metas de energia e proteína, as refeições do seu dia e os alimentos que você aceita. Responda o questionário em Alimentação para começar.</p><div class="actions"><button class="btn primary" data-act="ir" data-v="alimentacao">Ir para o questionário</button></div></div>`;
+    const ant=S.planos?.[addMes(S.mes,-1)];
+    return `<div class="intro-al"><span class="eyebrow">Cardápio de ${mesLabel(S.mes)}</span><h2>Vamos montar o seu cardápio</h2>
+      <p>Com base no seu perfil, monto as combinações de café, lanches e marmitas usando os alimentos que você aceita, com as porções em gramas e em medidas caseiras. Depois você troca o que quiser.</p>
+      <ul><li>Cardápio do dia, da semana e do mês, com o total de calorias e proteína.</li><li>Plano de preparo das marmitas nos seus dias de cozinha.</li><li>Lista de compras mensal e reposição semanal.</li></ul>
+      <div class="actions"><button class="btn primary" data-act="cdGerar">Montar meu cardápio</button>${ant?`<button class="btn" data-act="cdCopiar">Repetir o cardápio de ${MESES[+addMes(S.mes,-1).slice(5)-1]}</button>`:''}</div></div>`;
+  }
+  const tab=S.cdTab||'dia';
+  const tabs=[['dia','Dia'],['semana','Semana'],['mes','Mês'],['combos','Combinações'],['preparo','Preparo']];
+  const body={dia:cdDia,semana:cdSemana,mes:cdMes,combos:cdCombos,preparo:cdPreparo}[tab](pl);
+  const desat = S.perfilAl && pl.ctx && (pl.ctx.meta!==N().calcular(S.perfilAl,hoje())?.meta);
+  return `${desat?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>Seu perfil mudou desde que este cardápio foi montado (meta de ${kc(pl.ctx.meta)} kcal).</p><div class="actions" style="margin-top:6px"><button class="btn sm primary" data-act="cdAtualizarCtx">Atualizar porções com o perfil atual</button></div></div></div>`:''}
+    <div class="tabs" role="tablist">${tabs.map(([k,t])=>`<button role="tab" aria-selected="${tab===k}" data-act="cdTab" data-v="${k}">${t}</button>`).join('')}</div>${body}`;
+}
+function barraMeta(rot,val,alvo,und){ const pc=alvo?Math.min(130,val/alvo*100):0, cls=pc>110?'warn':pc<85?'warn':''; 
+  return `<div class="meta-l"><div class="meta-t"><span>${rot}</span><b class="num">${kc(val)}${und} <span class="muted small">/ ${kc(alvo)}${und}</span></b></div><div class="bar ${cls}"><i style="width:${Math.min(100,pc).toFixed(0)}%"></i></div></div>`; }
+function cdDia(pl){
+  const d=S.cdDia??diaHoje(), calc=calcDe(pl), p=perfDe(pl), D=CD().dia(pl,d,calc,p);
+  const gord=Math.round(calc.meta*0.28/9), carb=calc.prot?Math.round((calc.meta-calc.prot*4-gord*9)/4):null;
+  return `<div class="dias">${DIAS_CURTO.map((t,i)=>`<button class="chip" data-act="cdDiaSel" data-v="${i}" aria-pressed="${i===d}">${t}${i===diaHoje()?' · hoje':''}</button>`).join('')}</div>
+  <section class="panel"><h3>${DIAS_SEM[d]}: resumo do dia</h3>
+    <div class="metas">${barraMeta('Energia',D.kcal,calc.meta,' kcal')}${calc.prot?barraMeta('Proteína',D.p,calc.prot,' g'):''}${carb?barraMeta('Carboidratos',D.c,carb,' g'):''}${barraMeta('Gorduras',D.l,gord,' g')}</div>
+    <p class="small muted" style="margin:10px 0 0">Valores aproximados pela Tabela TACO (Unicamp). As porções já consideram o alimento pronto.</p></section>
+  ${D.refeicoes.map(r=>{ const lista = r.marmita ? pl.marmitas : (r.ref==='cafe'?pl.cafe:r.ref==='ceia'?pl.ceia:pl.lanche);
+    return `<section class="panel refeicao"><div class="ref-cab"><div><span class="eyebrow">${NOME_REF[r.ref]}${p.horarios?.[r.ref]?' · '+p.horarios[r.ref]:''}</span><h3>${esc(r.titulo)}</h3></div>
+      <div class="ref-k"><b class="num">${kc(r.kcal)} kcal</b><span class="small muted">meta ${kc(r.alvo)} · ${Math.round(r.p)} g prot.</span></div></div>
+      <div class="itens">${r.itens.map(i=>`<div class="item"><span>${esc(i.nome)}</span><span class="muted">${i.medida?esc(i.medida)+' · ':''}${i.g} g</span></div>`).join('')}</div>
+      ${lista.length>1?`<div class="field" style="margin-top:12px;max-width:340px"><label for="op_${r.ref}">Opção para ${DIAS_SEM[d].toLowerCase()}</label><select id="op_${r.ref}" data-chg="cdOpcao" data-ref="${r.ref}" data-d="${d}">${lista.map((o,i)=>`<option value="${i}" ${i===r.opcao?'selected':''}>${esc(r.marmita?CD_titulo(o,p):tituloOpcao(o,p))}</option>`).join('')}</select></div>`:''}
+    </section>`; }).join('')}`;
+}
+function CD_titulo(m,p){ return CD().refeicao({marmitas:[m],semana:[{almoco:0}],frutas:[]},0,'almoco',{porRefeicao:[{k:'almoco',kcal:600}],meta:2000,prot:100},p).titulo; }
+function tituloOpcao(o,p){ return o.itens.map(i=>i.fruta?'Fruta':CD().nomeItem(i.id,p).replace(/ \(.+\)/,'')).join(' + '); }
+function cdSemana(pl){
+  const calc=calcDe(pl), p=perfDe(pl), dias=[0,1,2,3,4,5,6].map(d=>CD().dia(pl,d,calc,p));
+  const refs=calc.porRefeicao.map(x=>x.k);
+  const media=k=>dias.reduce((a,x)=>a+x[k],0)/7;
+  const frutas=dias.reduce((a,x)=>a+x.refeicoes.flatMap(r=>r.itens).filter(i=>CD().C[i.id].g==='fruta').length,0);
+  const marm=dias.reduce((a,x)=>a+x.refeicoes.filter(r=>r.marmita).length,0);
+  return `<section class="kpis macros">
+    <div class="kpi"><span class="lbl">Média por dia</span><span class="val">${kc(media('kcal'))}</span><span class="sub">kcal · meta ${kc(calc.meta)}</span></div>
+    <div class="kpi"><span class="lbl">Proteína por dia</span><span class="val">${kc(media('p'))} g</span><span class="sub">${calc.prot?'meta '+calc.prot+' g':'média da semana'}</span></div>
+    <div class="kpi"><span class="lbl">Frutas na semana</span><span class="val">${frutas}</span><span class="sub">porções (${(frutas/7).toFixed(1).replace('.',',')} por dia)</span></div>
+    <div class="kpi"><span class="lbl">Marmitas</span><span class="val">${marm}</span><span class="sub">almoços e jantares na semana</span></div></section>
+  <div class="scroll"><table class="semana"><thead><tr><th></th>${DIAS_CURTO.map((t,i)=>`<th>${t}</th>`).join('')}</tr></thead><tbody>
+    ${refs.map(ref=>`<tr><th>${NOME_REF[ref]}</th>${dias.map((D,i)=>{ const r=D.refeicoes.find(x=>x.ref===ref); return `<td><button class="cel" data-act="cdIrDia" data-v="${i}">${r?esc(r.titulo):'—'}<span>${r?kc(r.kcal)+' kcal':''}</span></button></td>`; }).join('')}</tr>`).join('')}
+    <tr class="tot"><th>Total</th>${dias.map(D=>`<td class="num">${kc(D.kcal)} kcal<br><span class="muted">${Math.round(D.p)} g prot.</span></td>`).join('')}</tr>
+  </tbody></table></div>`;
+}
+function diasNoMes(ym){ const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
+function cdMes(pl){
+  const calc=calcDe(pl), p=perfDe(pl), n=diasNoMes(S.mes), sem=CD().consumoSemana(pl,calc,p), f=n/7;
+  const grupos={}; Object.entries(sem).forEach(([id,g])=>{ const a=CD().C[id]; (grupos[a.g]=grupos[a.g]||[]).push({id,nome:CD().nomeItem(id,p),g:g*f,a}); });
+  const marmMes=Math.round([0,1,2,3,4,5,6].reduce((a,d)=>a+CD().dia(pl,d,calc,p).refeicoes.filter(r=>r.marmita).length,0)*f*(p.pessoas||1));
+  const pronto = p.precoMarmita ? r2(p.precoMarmita*marmMes) : null;
+  return `<section class="kpis macros">
+    <div class="kpi"><span class="lbl">Dias no mês</span><span class="val">${n}</span><span class="sub">${mesLabel(S.mes)}</span></div>
+    <div class="kpi"><span class="lbl">Marmitas no mês</span><span class="val">${marmMes}</span><span class="sub">almoço e jantar${(p.pessoas||1)>1?` · ${p.pessoas} pessoas`:''}</span></div>
+    <div class="kpi"><span class="lbl">Se fossem prontas</span><span class="val">${pronto?money(pronto):'—'}</span><span class="sub">${p.precoMarmita?`a ${money(p.precoMarmita)} cada`:'informe o preço no perfil'}</span></div>
+    <div class="kpi"><span class="lbl">Custo em casa</span><span class="val">—</span><span class="sub">calculado com os preços da lista</span></div></section>
+  <section class="panel"><h3>Quanto você vai consumir em ${MESES[+S.mes.slice(5)-1]}</h3><p class="small muted" style="margin:-4px 0 12px">Alimento pronto, já somando ${p.pessoas>1?`as ${p.pessoas} pessoas`:'todas as refeições do mês'}.</p>
+    ${Object.keys(GRUPO_NOME).filter(g=>grupos[g]).map(g=>`<h4 class="grupo-h">${GRUPO_NOME[g]}</h4><div class="list">${grupos[g].sort((a,b)=>b.g-a.g).map(x=>linha(esc(x.nome), x.a.u?`${Math.round(x.g/x.a.u)} ${x.a.un[1]}`:(x.g>=1000?(Math.round(x.g/100)/10).toString().replace('.',',')+' kg':Math.round(x.g/10)*10+' g'))).join('')}</div>`).join('')}
+  </section>
+  <div class="actions"><button class="btn primary" data-act="ir" data-v="compras">Ver lista de compras</button></div>`;
+}
+function selAlimento(slot, grupos, atual, p, extra=''){
+  const ids=Object.keys(CD().C).filter(id=>grupos.includes(CD().C[id].g) && CD().permitido(id,{...p,naoGosta:p.naoGosta||[]}));
+  if(atual && !ids.includes(atual)) ids.unshift(atual);
+  return `<select data-chg="cdSlot" ${slot} ${extra}>${ids.map(id=>`<option value="${id}" ${id===atual?'selected':''}>${esc(CD().nomeItem(id,p))}</option>`).join('')}</select>`;
+}
+function cdCombos(pl){
+  const p=perfDe(pl);
+  const opcList=(tipo,lista)=>lista.map((o,i)=>`<div class="combo"><div class="combo-cab"><b>Opção ${i+1}</b>${lista.length>1?`<button class="btn sm ghost" data-act="cdRemover" data-tipo="${tipo}" data-i="${i}">Remover</button>`:''}</div>
+    <div class="combo-slots">${o.itens.map((it,j)=>it.fruta?`<label class="slot"><span>Fruta</span><select disabled><option>Varia a cada dia</option></select></label>`:`<label class="slot"><span>${GRUPO_NOME[CD().C[it.id].g]||''}</span>${selAlimento(`data-tipo="${tipo}" data-i="${i}" data-j="${j}"`,[CD().C[it.id].g],it.id,p)}</label>`).join('')}</div></div>`).join('');
+  return `<p class="muted small" style="margin:0">Troque qualquer alimento: a mudança vale para todos os dias que usam aquela opção. As porções se ajustam sozinhas às suas metas.</p>
+  <section class="panel"><div class="section-head"><h3 style="margin:0">Marmitas (almoço e jantar)</h3><div class="right"><button class="btn sm" data-act="cdAddMarmita">+ Nova marmita</button></div></div>
+    ${pl.marmitas.map((m,i)=>`<div class="combo"><div class="combo-cab"><b>${esc(CD_titulo(m,p))}</b>${pl.marmitas.length>2?`<button class="btn sm ghost" data-act="cdRemover" data-tipo="marmitas" data-i="${i}">Remover</button>`:''}</div>
+      <div class="combo-slots">
+        <label class="slot"><span>Proteína</span>${selAlimento(`data-tipo="marmitas" data-i="${i}" data-k="proteina"`,['proteina','leguminosa'],m.proteina,p)}</label>
+        <label class="slot"><span>Acompanhamento</span>${selAlimento(`data-tipo="marmitas" data-i="${i}" data-k="carbo"`,['carbo'],m.carbo,p)}</label>
+        <label class="slot"><span>Feijão ou grão</span><select data-chg="cdSlot" data-tipo="marmitas" data-i="${i}" data-k="leguminosa"><option value="">Sem</option>${Object.keys(CD().C).filter(id=>CD().C[id].g==='leguminosa'&&CD().permitido(id,p)).map(id=>`<option value="${id}" ${id===m.leguminosa?'selected':''}>${esc(CD().C[id].n)}</option>`).join('')}</select></label>
+        ${(m.legumes||[]).map((v,j)=>`<label class="slot"><span>Legume ${j+1}</span>${selAlimento(`data-tipo="marmitas" data-i="${i}" data-k="legumes" data-j="${j}"`,['legume'],v,p)}</label>`).join('')}
+      </div></div>`).join('')}</section>
+  <section class="panel"><h3>Café da manhã</h3>${opcList('cafe',pl.cafe)}</section>
+  <section class="panel"><h3>Lanches</h3>${opcList('lanche',pl.lanche)}</section>
+  ${pl.ceia&&calcDe(pl).porRefeicao.some(x=>x.k==='ceia')?`<section class="panel"><h3>Ceia</h3>${opcList('ceia',pl.ceia)}</section>`:''}
+  <section class="panel"><h3>Frutas da semana</h3><p class="small muted" style="margin:-4px 0 10px">Elas se revezam nos cafés e lanches.</p>
+    <div class="chips">${Object.keys(CD().C).filter(id=>CD().C[id].g==='fruta'&&CD().permitido(id,p)).map(id=>`<button class="chip" data-act="cdFruta" data-v="${id}" aria-pressed="${pl.frutas.includes(id)}">${esc(CD().C[id].n)}</button>`).join('')}</div></section>
+  <div class="actions"><button class="btn" data-act="cdRegerar">Gerar novas combinações</button></div>`;
+}
+function cdPreparo(pl){
+  const calc=calcDe(pl), p=perfDe(pl), ses=CD().preparo(pl,calc,p), ordem={dom:'Domingo',seg:'Segunda',ter:'Terça',qua:'Quarta',qui:'Quinta',sex:'Sexta',sab:'Sábado'};
+  const semFreezer=(p.freezer||'medio')==='nenhum';
+  return `${ses.map(s=>`<section class="panel"><div class="ref-cab"><div><span class="eyebrow">Dia de preparo</span><h3>${ordem[s.dia]}: marmitas para ${s.n} ${s.n>1?'dias':'dia'}</h3></div>
+      <div class="ref-k"><b class="num">${s.potes} potes</b><span class="small muted">${s.geladeira} na geladeira · ${s.freezer} no freezer</span></div></div>
+      ${s.freezer && semFreezer?`<div class="alert warn" style="margin:12px 0"><span class="dot"></span><div><p>Sem freezer, comida pronta deve ser consumida em até 3 dias. Inclua outro dia de preparo no seu perfil.</p></div></div>`:''}
+      <table class="prep"><thead><tr><th>Alimento</th><th class="r">Comprar / separar (cru)</th><th class="r">Rende pronto</th></tr></thead><tbody>
+      ${s.cozinhar.map(x=>`<tr><td>${esc(x.nome)}</td><td class="r">${x.txtCru}</td><td class="r muted">${x.txtPronto}</td></tr>`).join('')}</tbody></table></section>`).join('')}
+  <section class="panel"><h3>Ordem de preparo</h3><ol class="passos">
+    <li><b>Feijão ou grãos primeiro.</b> Deixe de molho na noite anterior e cozinhe na panela de pressão; enquanto isso, adiante o resto.</li>
+    <li><b>Arroz ou massa.</b> Cozinhe a quantidade total da semana de uma vez.</li>
+    <li><b>Proteínas.</b> Tempere e prepare no forno, na air fryer ou na frigideira. Carne moída rende bem refogada em panela grande.</li>
+    <li><b>Legumes.</b> Cozinhe no vapor ou asse até ficarem macios, mas firmes, para não amolecerem no reaquecimento.</li>
+    <li><b>Monte as marmitas.</b> Divida nas porções de cada dia, espere amornar e tampe. Leve à geladeira ou ao freezer em até 2 horas depois de pronto.</li>
+    <li><b>Etiquete</b> cada pote com o dia e a data do preparo.</li></ol></section>
+  <section class="panel"><h3>Conservação segura</h3><ul class="passos">
+    <li>Geladeira (até 5 °C): consumir em até <b>3 dias</b>.</li>
+    <li>Freezer (−18 °C): até <b>30 dias</b>. Descongele na geladeira de um dia para o outro ou direto no micro-ondas.</li>
+    <li>Não recongele o que já foi descongelado. Folhas e saladas cruas vão à parte, montadas na hora.</li>
+    <li>Reaqueça até ficar bem quente por igual.</li></ul>
+    <p class="small muted" style="margin:8px 0 0">Referência: boas práticas da Anvisa para alimentos preparados (RDC 216/2004).</p></section>`;
+}
+
+/* ---------- lista de compras ---------- */
+function vCompras(){
+  if(S.alErro4) return `<div class="empty"><strong>A lista de compras precisa de uma atualização no banco</strong>Execute o arquivo <b>004_cardapio_compras.sql</b> no Supabase e recarregue.</div>`;
+  if(S.planos===undefined) return `<div class="empty"><strong>Carregando…</strong></div>`;
+  const pl=planoMes();
+  if(!pl) return `<div class="empty"><strong>Sem cardápio em ${mesLabel(S.mes)}</strong>A lista é gerada a partir do cardápio do mês.<div class="actions" style="justify-content:center;margin-top:12px"><button class="btn primary" data-act="ir" data-v="cardapios">Montar cardápio</button></div></div>`;
+  const tipo=S.lcTab||'mensal', chave=`${S.mes}:${tipo}`, est=S.listas?.[chave]||{};
+  const L=CD().listas(pl,calcDe(pl),perfDe(pl),diasNoMes(S.mes)), itens=L[tipo];
+  const ativos=itens.filter(i=>!est[i.id]?.tenho), comprados=ativos.filter(i=>est[i.id]?.ok);
+  const comPreco=ativos.filter(i=>est[i.id]?.preco>0), total=sum(comPreco,i=>est[i.id].preco);
+  const grupos={}; itens.forEach(i=>(grupos[i.grupo]=grupos[i.grupo]||[]).push(i));
+  return `<div class="tabs" role="tablist"><button role="tab" aria-selected="${tipo==='mensal'}" data-act="lcTab" data-v="mensal">Compra do mês (${L.mensal.length})</button><button role="tab" aria-selected="${tipo==='semanal'}" data-act="lcTab" data-v="semanal">Reposição semanal (${L.semanal.length})</button></div>
+  <section class="kpis macros">
+    <div class="kpi"><span class="lbl">Itens</span><span class="val">${comprados.length}/${ativos.length}</span><span class="sub">comprados${itens.length-ativos.length?` · ${itens.length-ativos.length} já em casa`:''}</span></div>
+    <div class="kpi"><span class="lbl">Total com preço</span><span class="val">${money(total)}</span><span class="sub">${comPreco.length} de ${ativos.length} itens com preço</span></div>
+    <div class="kpi"><span class="lbl">Mercados</span><span class="val" style="font-size:18px">Comper · Big Lar</span><span class="sub">Cuiabá</span></div>
+    <div class="kpi"><span class="lbl">${tipo==='mensal'?'Para':'Para'}</span><span class="val" style="font-size:18px">${tipo==='mensal'?mesLabel(S.mes):'7 dias'}</span><span class="sub">${tipo==='mensal'?'itens duráveis e proteínas para congelar':'frutas, legumes, verduras e frescos'}</span></div></section>
+  <p class="note" style="margin:0">Preencha o preço ao comprar, ou envie a foto do cupom fiscal (próxima atualização): os valores pagos entram aqui e passam a ser usados nas próximas estimativas. Os preços de referência de Cuiabá chegam na próxima etapa.</p>
+  ${Object.keys(GRUPO_NOME).filter(g=>grupos[g]).map(g=>`<section class="panel lista"><h3>${GRUPO_NOME[g]}</h3>${grupos[g].map(i=>{ const e=est[i.id]||{};
+    return `<div class="lc ${e.ok?'ok':''} ${e.tenho?'tenho':''}"><button class="lc-check" data-act="lcOk" data-id="${i.id}" aria-pressed="${!!e.ok}" aria-label="Marcar ${esc(i.nome)} como comprado" ${e.tenho?'disabled':''}>${icon(I.check)}</button>
+      <div class="lc-t"><b>${esc(i.nome)}</b><span>${esc(i.txt)}${i.sub?' · '+esc(i.sub):''}</span></div>
+      <input class="inline-input num" inputmode="decimal" placeholder="R$" aria-label="Preço pago: ${esc(i.nome)}" data-lcpreco="${i.id}" value="${e.preco?fmtInput(e.preco):''}" ${e.tenho?'disabled':''}>
+      <button class="btn sm ghost" data-act="lcTenho" data-id="${i.id}">${e.tenho?'Comprar':'Já tenho'}</button></div>`; }).join('')}</section>`).join('')}
+  <div class="actions">${tipo==='semanal'?`<button class="btn" data-act="lcLimpar">Começar nova semana</button>`:''}<button class="btn" data-act="ir" data-v="cardapios">Voltar ao cardápio</button></div>`;
+}
+async function salvarLista(chave, novo){ S.listas={...S.listas,[chave]:novo}; render(); chk(await sb.from('listas_compra').upsert({espaco_id:S.esp,chave,itens:novo,atualizado_em:new Date().toISOString()},{onConflict:'espaco_id,chave'})); }
+function alterarItem(id, patch){ const chave=`${S.mes}:${S.lcTab||'mensal'}`, est={...(S.listas?.[chave]||{})}; est[id]={...(est[id]||{}),...patch}; return salvarLista(chave,est); }
+
+const acoesCd = {
+  cdTab: el => { S.cdTab=el.dataset.v; render(); },
+  cdDiaSel: el => { S.cdDia=+el.dataset.v; render(); },
+  cdIrDia: el => { S.cdDia=+el.dataset.v; S.cdTab='dia'; render(); window.scrollTo(0,0); },
+  cdGerar: async () => { const ctx=ctxDoPerfil(); if(!ctx){ toast('Complete o perfil alimentar primeiro.'); return; } const d={...CD().gerar(S.perfilAl, Date.now()%100000), ctx}; await salvarPlano(d); S.cdTab='dia'; toast('Cardápio montado. Confira e troque o que quiser.'); },
+  cdCopiar: async () => { const ant=S.planos[addMes(S.mes,-1)]; const ctx=ctxDoPerfil()||ant.ctx; await salvarPlano({...ant,ctx}); toast('Cardápio do mês anterior repetido.'); },
+  cdRegerar: () => confirmar('Gerar novas combinações','As combinações atuais e as trocas que você fez neste mês serão substituídas.',[{t:'Gerar novas',cls:'primary',fn:async()=>{ const pl=planoMes(); const base=S.perfilAl?{...S.perfilAl}:{...pl.ctx}; await salvarPlano({...CD().gerar(base,Date.now()%100000),ctx:ctxDoPerfil()||pl.ctx}); }}]),
+  cdAtualizarCtx: async () => { await salvarPlano({...planoMes(),ctx:ctxDoPerfil()}); toast('Porções atualizadas.'); },
+  cdAddMarmita: async () => { const pl=structuredClone(planoMes()); const m=pl.marmitas[pl.marmitas.length-1]; pl.marmitas.push({...m,legumes:[...(m.legumes||[])]}); await salvarPlano(pl); toast('Marmita adicionada. Troque os alimentos dela abaixo.'); },
+  cdRemover: async el => { const pl=structuredClone(planoMes()), t=el.dataset.tipo, i=+el.dataset.i; pl[t].splice(i,1);
+    const ref = t==='marmitas'?['almoco','jantar']:t==='cafe'?['cafe']:t==='ceia'?['ceia']:['lanche_manha','lanche_tarde'];
+    pl.semana.forEach(s=>ref.forEach(r=>{ if(s[r]===i) s[r]=0; else if(s[r]>i) s[r]--; })); await salvarPlano(pl); },
+  cdFruta: async el => { const pl=structuredClone(planoMes()), id=el.dataset.v; pl.frutas = pl.frutas.includes(id) ? pl.frutas.filter(x=>x!==id) : [...pl.frutas,id]; if(!pl.frutas.length){ toast('Mantenha pelo menos uma fruta.'); return; } await salvarPlano(pl); },
+  lcTab: el => { S.lcTab=el.dataset.v; render(); },
+  lcOk: el => { const id=el.dataset.id, e=S.listas?.[`${S.mes}:${S.lcTab||'mensal'}`]?.[id]||{}; return alterarItem(id,{ok:!e.ok}); },
+  lcTenho: el => { const id=el.dataset.id, e=S.listas?.[`${S.mes}:${S.lcTab||'mensal'}`]?.[id]||{}; return alterarItem(id,{tenho:!e.tenho, ok:false}); },
+  lcLimpar: () => confirmar('Começar nova semana','Os itens marcados e os preços da reposição semanal serão limpos.',[{t:'Limpar',cls:'primary',fn:()=>salvarLista(`${S.mes}:semanal`,{})}])
+};
+async function mudarCombo(t){
+  const pl=structuredClone(planoMes()), tipo=t.dataset.tipo, i=+t.dataset.i;
+  if(tipo==='marmitas'){ const k=t.dataset.k; if(k==='legumes') pl.marmitas[i].legumes[+t.dataset.j]=t.value; else pl.marmitas[i][k]=t.value||null; }
+  else pl[tipo][i].itens[+t.dataset.j].id=t.value;
+  await salvarPlano(pl);
+}
+
+Object.assign(acoes, acoesAl, acoesCd);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{
@@ -1101,6 +1301,9 @@ document.addEventListener('submit', async e=>{
 document.addEventListener('change', async e=>{
   const t=e.target;
   if(t.id==='arqComp'){ processarAnexo(t); return; }
+  if(t.dataset.chg==='cdSlot'){ try{ await mudarCombo(t); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.chg==='cdOpcao'){ const pl=structuredClone(planoMes()); pl.semana[+t.dataset.d][t.dataset.ref]=+t.value; try{ await salvarPlano(pl); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.lcpreco){ const v=t.value.trim()===''?null:parseValor(t.value); if(v!==null&&(isNaN(v)||v<0)){ toast('Preço inválido.'); return; } try{ await alterarItem(t.dataset.lcpreco,{preco:v===null?null:r2(v), ...(v>0?{ok:true}:{})}); }catch(x){ dbErr(x); } return; }
   if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
   else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }

@@ -141,6 +141,8 @@ function erroAmigavel(e){
   if(m.includes('password should be')||m.includes('weak')) return 'A senha é fraca. Use pelo menos 8 caracteres, misturando letras e números.';
   if(m.includes('rate limit')||m.includes('too many')) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
   if(m.includes('código de convite')) return 'Código de convite não encontrado. Confira as letras e números.';
+  if(/(conferido|favorecido)/.test(m) && /column|coluna|schema cache/.test(m)) return 'Falta executar a atualização 006_lancamento_rapido.sql no Supabase (SQL Editor).';
+  if(/(compras|precos|compra_itens)/.test(m) && /relation|schema cache|does not exist/.test(m)) return 'Falta executar a atualização 005_compras_precos.sql no Supabase (SQL Editor).';
   if(m.includes('failed to fetch')||m.includes('network')) return 'Sem conexão com o servidor. Verifique a internet e tente de novo.';
   return e?.message || 'Algo não saiu como esperado. Tente novamente.';
 }
@@ -271,6 +273,7 @@ const pillP = p => p ? `<span class="pill p${p}">Dia ${p}</span>` : '';
 function rowDesp(d,o={}){
   const s=sitDesp(d), grupo=(+d.parcelas||1)>1, ops=[];
   const pix=d.pixCopiaCola||d.chavePix;
+  if(d.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="despesas" data-id="${d.id}">${icon(I.check)}Conferido</button>`);
   if(pix && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
   if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Paga</button>`);
   if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
@@ -280,17 +283,18 @@ function rowDesp(d,o={}){
   const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
   const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
   const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];
+  if(r.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="receitas" data-id="${r.id}">${icon(I.check)}Conferido</button>`);
   if(s!=='recebida'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
   if(r.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(r.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   if(o.mover){ if(r.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="10">Dia 10</button>`); if(r.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="20">Dia 20</button>`); }
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const val = s==='recebida' ? `${money(r.valorRecebido)}${r2(r.valorRecebido)!==r2(r.valorPrevisto)?`<div class="small muted">previsto ${money(r.valorPrevisto)}</div>`:''}` : money(r.valorPrevisto);
-  return `<div class="row"><div><div class="t">${esc(r.descricao)}</div><div class="meta"><span>${esc(r.origem||'')}</span><span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(r.origem||'')}</span><span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
 
@@ -305,6 +309,8 @@ function vInicio(){
   const orcAlim=r2(S.cats.filter(c=>c.alimentacao).reduce((a,c)=>a+(+lim[c.id]||0),0));
   const gAlim=sum(fd,d=>d.valor), marm=sum(fd.filter(d=>catById(d.categoria)?.nome==='Marmitas compradas'),d=>d.valor);
   return `
+  <section class="rapido-bar"><form data-form="rapidoTexto" class="rapido-texto"><div class="field"><label for="rtHome">Lançamento rápido</label><input id="rtHome" name="t" autocomplete="off" placeholder="uber 23,50 · ifood 45,90 ontem · recebi 150 João"></div><button class="btn primary" type="submit">Lançar</button><button class="btn" type="button" data-act="enviarComprovante">${icon(I.clip)}Comprovante</button></form><p class="err" id="rtErr"></p></section>
+  ${blocoConferir()}
   ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
   <section><div class="section-head"><h2>Visão financeira</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
     <div class="kpis">
@@ -339,7 +345,7 @@ function vFinanceiro(){
   if(f.sit) D=D.filter(d=>sitDesp(d)===f.sit); if(f.cat) D=D.filter(d=>d.categoria===f.cat);
   D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
   const isD=S.tab==='despesas';
-  return `
+  return `${blocoConferir()}
   <div class="kpis">
     <div class="kpi"><span class="lbl">Receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} recebidos</span></div>
     <div class="kpi"><span class="lbl">Despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} pagos</span></div>
@@ -467,7 +473,7 @@ function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
 /* ---------- modais ---------- */
 let modalSubmit=null;
 function abrirModal(html,onSubmit,afterMount){ anexo=null; $('#sheet').innerHTML=html; $('#modal').hidden=false; modalSubmit=onSubmit; afterMount&&afterMount($('#sheet')); setTimeout(()=>{ const f=$('#sheet').querySelector('input:not([type=hidden]):not([type=checkbox]),select,textarea'); f&&f.focus(); },30); }
-function fecharModal(){ $('#modal').hidden=true; $('#sheet').innerHTML=''; modalSubmit=null; }
+function fecharModal(){ if(S.fila?.resolver){ const rv=S.fila.resolver; S.fila.resolver=null; S.fila.parar=true; rv(null); } $('#modal').hidden=true; $('#sheet').innerHTML=''; modalSubmit=null; }
 function toast(t){ const el=$('#toast'); el.textContent=t; el.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>el.hidden=true,3600); }
 const head = t => `<header><h2>${t}</h2><button type="button" class="icon-btn" data-act="fechar" aria-label="Fechar">${icon('M6 6l12 12M18 6 6 18')}</button></header>`;
 const opts = (arr,sel) => arr.map(([v,t])=>`<option value="${esc(v)}" ${String(sel??'')===String(v)?'selected':''}>${esc(t)}</option>`).join('');
@@ -656,7 +662,7 @@ async function editarDespesa(f,fd,base,valor){
   const agora=new Date().toISOString(), arq=await enviarArquivo();
   const grupo=(+d.parcelas||1)>1 && d.grupoParcela;
   if(!grupo){
-    await atualizar('despesas',id,{...base,valor:r2(valor),vencimento:fd.vencimento,atualizadoEm:agora,...(arq||{})});
+    await atualizar('despesas',id,{...base,valor:r2(valor),vencimento:fd.vencimento,atualizadoEm:agora,conferido:true,...(arq||{})});
     if(arq && d.comprovante) apagarArquivos([d.comprovante]);
     toast('Despesa atualizada.'); return;
   }
@@ -722,7 +728,7 @@ async function salvarReceita(f){
   const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
   const arq=await enviarArquivo();
   const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
-  if(id){ const old=S.rec.find(x=>x.id===id); await atualizar('receitas',id,{...dados,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]); toast('Receita atualizada.'); }
+  if(id){ const old=S.rec.find(x=>x.id===id); await atualizar('receitas',id,{...dados,conferido:true,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]); toast('Receita atualizada.'); }
   else { await inserir('receitas',dados); toast('Receita salva.'); }
 }
 function abrirCat(c){
@@ -1444,7 +1450,145 @@ const acoesCupom = {
   cupomDel: el => { lerCupomForm($('form[data-form="cupom"]')); S.cupom.itens.splice(+el.dataset.i,1); renderCupom(); }
 };
 
-Object.assign(acoes, acoesAl, acoesCd, acoesCupom);
+/* ---------- lançamento rápido por comprovante ou texto ---------- */
+const RC = () => window.MeuEixoReconhecer;
+const ehCupom = t => /DOCUMENTO AUXILIAR|NFC-?E|CUPOM FISCAL|DANFE/i.test(t||'') && (String(t).match(/\d+[.,]\d{2}\s*$/gm)||[]).length>=4;
+function abrirRapido(){
+  abrirModal(`<div>${head('Enviar comprovante')}</div>
+    <input type="file" id="arqRapido" accept="image/*,application/pdf" multiple hidden>
+    <button type="button" class="drop" data-act="rapidoEscolher">${icon(I.clip)}<b>Escolher comprovantes</b><span>Foto, print ou PDF. Pode selecionar vários de uma vez.</span></button>
+    <form data-form="rapidoTexto" class="rapido-texto"><div class="field"><label for="rtTxt">Ou escreva o gasto</label><input id="rtTxt" name="t" autocomplete="off" placeholder="Ex.: uber 23,50 · ifood 45,90 ontem · recebi 150 João"></div><button class="btn primary" type="submit">Lançar</button></form>
+    <p class="small muted" style="margin:0">Contas já lançadas, contas fixas, parcelas e recebedores que você já usou são lançados na hora e ficam marcados <b>a conferir</b>. Se for algo novo, eu pergunto só o essencial.</p>
+    <p class="err" id="formErr"></p>
+    <footer><button type="button" class="btn ghost" data-act="novo" data-tipo="despesa">Lançamento manual completo</button><button type="button" class="btn" data-act="fechar">Fechar</button></footer>`,null);
+}
+function baseReconhecer(){ return {desp:S.desp, rec:S.rec, recor:S.recor, cats:S.cats}; }
+function telaFila(msg){ $('#modal').hidden=false; modalSubmit=null; $('#sheet').innerHTML=`<div>${head('Lendo comprovantes')}</div><div class="fila-prog"><div class="spinner" aria-hidden="true"></div><p id="filaMsg">${msg}</p></div>`; }
+async function processarRapido(files, textoR){
+  const fila={itens:[], feitos:[]}; S.fila=fila;
+  const lista = textoR ? [{texto:textoR}] : [...files].map(f=>({file:f}));
+  for(let i=0;i<lista.length;i++){
+    if(fila.parar) break;
+    const it=lista[i]; let r=it.texto||null, hash=null;
+    if(it.file){
+      telaFila(`Lendo ${lista.length>1?`${i+1} de ${lista.length}`:'o comprovante'}…`);
+      if(it.file.size>10*1024*1024){ fila.feitos.push({tipo:'erro',txt:`${it.file.name}: arquivo maior que 10 MB.`}); continue; }
+      try{ hash=await LEITOR().hash(it.file); }catch(_){}
+      const dup=hash && [...S.desp.map(x=>({...x,_t:'despesa'})),...S.rec.map(x=>({...x,_t:'receita'}))].find(x=>x.comprovanteHash===hash);
+      if(dup){ fila.feitos.push({tipo:'dup',txt:`Já enviado antes: ${dup.descricao} (${money(dup.valor??dup.valorRecebido??dup.valorPrevisto)})`}); continue; }
+      try{ r=await LEITOR().ler(it.file, p=>{ const m=$('#filaMsg'); if(m) m.textContent=`Lendo ${lista.length>1?`${i+1} de ${lista.length}`:'o comprovante'}… ${p}%`; }); }
+      catch(e){ console.error(e); r={valor:null,data:null,nome:null,chave:null,entrada:false,texto:''}; }
+      if(ehCupom(r.texto)){ fila.feitos.push({tipo:'cupom',txt:'Parece um cupom fiscal de mercado.',file:it.file}); continue; }
+    }
+    const dec = r.valor>0 ? RC().decidir(r, baseReconhecer(), hoje()) : {acao:'novo', tipo:r.entrada?'receita':'despesa', sugestao:RC().conhecido(r.nome||'')};
+    try{
+      if(dec.acao==='novo'){ const resp=await perguntarNovo(r, dec, it.file, hash, i, lista.length); if(resp) fila.feitos.push(resp); else fila.feitos.push({tipo:'pulado',txt:`Pulado: ${r.nome||'comprovante'}${r.valor?' · '+money(r.valor):''}`}); }
+      else fila.feitos.push(await executarAuto(dec, r, it.file, hash));
+    }catch(e){ console.error(e); fila.feitos.push({tipo:'erro',txt:`Não foi possível lançar ${r.nome||'o comprovante'}: ${erroAmigavel(e)}`}); }
+  }
+  mostrarResumoFila();
+}
+async function subir(file, hash){ if(!file) return {}; anexo={file,hash}; const a=await enviarArquivo(); anexo=null; return a||{}; }
+const periodoDaData = d => (+String(d||'').slice(8,10)<=15?'10':'20');
+async function executarAuto(dec, r, file, hash){
+  const data=r.data||hoje(), arq=await subir(file,hash), nome=r.nome||'';
+  if(dec.acao==='pagar'){ const x=dec.alvo, antes={situacao:x.situacao,valor:x.valor,dataPagamento:x.dataPagamento||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
+    await atualizar('despesas',x.id,{situacao:'paga',valor:r2(r.valor),dataPagamento:data,conferido:false,favorecido:x.favorecido||nome,chavePix:x.chavePix||r.chave||'',formaPagamento:x.formaPagamento||(r.pix?'Pix':''),...arq});
+    const parc=(+x.parcelas||1)>1?` (parcela ${x.parcelaAtual} de ${x.parcelas})`:'';
+    return {tipo:'ok',txt:`Pago: ${x.descricao}${parc} · ${money(r.valor)}`,motivo:dec.motivo,desfazer:{t:'despesas',id:x.id,patch:antes}}; }
+  if(dec.acao==='recorrencia'){ const t=dec.modelo, ym=data.slice(0,7), [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
+    const id=await inserir('despesas',{descricao:t.descricao,valor:r2(r.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||(r.pix?'Pix':''),comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'paga',dataPagamento:data,parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||r.chave||'',favorecido:t.favorecido||nome,conferido:false,...arq});
+    return {tipo:'ok',txt:`Conta fixa paga: ${t.descricao} · ${money(r.valor)}`,motivo:'conta fixa reconhecida',desfazer:{t:'despesas',id,apagar:true}}; }
+  if(dec.acao==='receber'){ const x=dec.alvo, antes={situacao:x.situacao,valorRecebido:x.valorRecebido??null,dataEfetiva:x.dataEfetiva||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
+    await atualizar('receitas',x.id,{situacao:'recebida',valorRecebido:r2(r.valor),dataEfetiva:data,conferido:false,favorecido:x.favorecido||nome,...arq});
+    return {tipo:'ok',txt:`Recebido: ${x.descricao} · ${money(r.valor)}`,motivo:'receita prevista',desfazer:{t:'receitas',id:x.id,patch:antes}}; }
+  if(dec.acao==='historico' && dec.tipo==='receita'){ const b=dec.base;
+    const id=await inserir('receitas',{descricao:b.descricao,origem:b.origem,valorPrevisto:r2(r.valor),valorRecebido:r2(r.valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',periodo:periodoDaData(data),favorecido:nome,conferido:false,...arq});
+    return {tipo:'ok',txt:`Receita: ${b.descricao} · ${money(r.valor)}`,motivo:'pagador conhecido',desfazer:{t:'receitas',id,apagar:true}}; }
+  const b=dec.base, desc=String(b.descricao).replace(/\s+[-–]\s+(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro).*$/i,'');
+  const id=await inserir('despesas',{descricao:desc,valor:r2(r.valor),categoria:b.categoria||'',subcategoria:b.subcategoria||'',formaPagamento:r.pix?'Pix':(b.formaPagamento||''),comportamento:'variavel',periodo:'',dataCompra:data,vencimento:data,dataPagamento:data,situacao:'paga',parcelas:1,chavePix:r.chave||b.chavePix||'',favorecido:nome||b.favorecido||'',conferido:false,...arq});
+  return {tipo:'ok',txt:`${desc} · ${money(r.valor)} em ${catNome(b.categoria)}`,motivo:'recebedor conhecido',desfazer:{t:'despesas',id,apagar:true}};
+}
+function perguntarNovo(r, dec, file, hash, i, n){
+  return new Promise(resolve=>{
+    S.fila.resolver=resolve; S.fila.atual={r,dec,file,hash}; $('#modal').hidden=false; modalSubmit=null;
+    const tipo=dec.tipo||'despesa', sug=dec.sugestao, cats=S.cats;
+    const catSel = sug ? (cats.find(c=>c.nome===sug.categoriaNome)?.id||'') : '';
+    $('#sheet').innerHTML=`<form data-form="rapidoNovo">${head(n>1?`Comprovante ${i+1} de ${n}: algo novo`:'Algo novo')}
+      <p class="small muted" style="margin:0">${r.valor?`Li <b>${money(r.valor)}</b>${r.data?' em '+dataBR(r.data):''}${r.nome?' · '+esc(r.nome):''}. `:'Não consegui ler o valor; preencha abaixo. '}Confirme o que falta e eu guardo para reconhecer da próxima vez.</p>
+      <input type="hidden" name="tipo" value="${tipo}"><input type="hidden" name="rep" value="unica">
+      <div class="seg" id="segTipo"><button type="button" data-act="rnTipo" data-v="despesa" aria-pressed="${tipo==='despesa'}">Despesa</button><button type="button" data-act="rnTipo" data-v="receita" aria-pressed="${tipo==='receita'}">Receita</button></div>
+      <div class="form-grid">
+        <div class="field"><label for="rnV">Valor (R$)</label><input id="rnV" name="valor" inputmode="decimal" required value="${r.valor?fmtInput(r.valor):''}"></div>
+        <div class="field"><label for="rnD">Data</label><input id="rnD" name="data" type="date" required value="${r.data||hoje()}"></div>
+        <div class="field full"><label for="rnDesc">Descrição</label><input id="rnDesc" name="descricao" required maxlength="120" value="${esc(sug?.rotulo||r.nome||'')}" placeholder="Ex.: Uber, iFood, Farmácia"></div>
+      </div>
+      <div class="field" data-rn="despesa" ${tipo!=='despesa'?'hidden':''}><span class="lbl">Categoria</span><div class="chips" data-nome="categoria">${cats.map(c=>`<button type="button" class="chip" data-act="rnCat" data-v="${c.id}" aria-pressed="${c.id===catSel}">${esc(c.nome)}</button>`).join('')}</div></div>
+      <div class="field" data-rn="receita" ${tipo!=='receita'?'hidden':''}><span class="lbl">Origem</span><div class="chips" data-nome="origem">${ORIGENS.map(o=>`<button type="button" class="chip" data-act="rnCat" data-v="${o}" aria-pressed="${o==='Outra'}">${o}</button>`).join('')}</div></div>
+      <div class="field" data-rn="despesa" ${tipo!=='despesa'?'hidden':''}><span class="lbl">Como se repete</span><div class="seg" id="segRep"><button type="button" data-act="rnRep" data-v="unica" aria-pressed="true">Só desta vez</button><button type="button" data-act="rnRep" data-v="mensal" aria-pressed="false">Todo mês</button><button type="button" data-act="rnRep" data-v="parcelada" aria-pressed="false">Parcelada</button></div></div>
+      <div class="form-grid" data-rn="parc" hidden>
+        <div class="field"><label for="rnA">Esta é a parcela nº</label><input id="rnA" name="atual" type="number" min="1" max="120" inputmode="numeric" value="1"></div>
+        <div class="field"><label for="rnN">De um total de</label><input id="rnN" name="total" type="number" min="2" max="120" inputmode="numeric" value="12"></div>
+      </div>
+      ${rodape('Lançar').replace('<button type="button" class="btn" data-act="fechar">Cancelar</button>','<button type="button" class="btn" data-act="rnPular">Pular este</button>')}</form>`;
+  });
+}
+async function salvarNovoRapido(f){
+  const E=f.elements, {r,file,hash}=S.fila.atual, tipo=E.tipo.value, valor=parseValor(E.valor.value), data=E.data.value, desc=E.descricao.value.trim();
+  if(!(valor>0)) return 'Informe o valor.'; if(!data) return 'Informe a data.'; if(!desc) return 'Informe uma descrição curta.';
+  const sel=g=>f.querySelector(`.chips[data-nome="${g}"] [aria-pressed="true"]`)?.dataset.v;
+  const arq=await subir(file,hash), nome=r.nome||desc;
+  if(tipo==='receita'){ const id=await inserir('receitas',{descricao:desc,origem:sel('origem')||'Outra',valorPrevisto:r2(valor),valorRecebido:r2(valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',periodo:periodoDaData(data),favorecido:nome,...arq});
+    return {tipo:'ok',txt:`Receita: ${desc} · ${money(valor)}`,motivo:'nova',desfazer:{t:'receitas',id,apagar:true}}; }
+  const cat=sel('categoria'); if(!cat) return 'Escolha a categoria.';
+  const rep=E.rep.value, forma=r.pix?'Pix':'', base={descricao:desc,categoria:cat,subcategoria:'',formaPagamento:forma,favorecido:nome,chavePix:r.chave||'',periodo:''};
+  if(rep==='parcelada'){ const A=parseInt(E.atual.value)||1, N=parseInt(E.total.value)||0; if(N<2||A<1||A>N) return `A parcela precisa estar entre 1 e ${N||'o total'}.`;
+    const grupo='g'+uid(), rows=[]; for(let n=A;n<=N;n++){ const k=n-A; rows.push({...base,comportamento:'variavel',valor:r2(valor),valorTotal:r2(valor*N),parcelas:N,parcelaAtual:n,grupoParcela:grupo,vencimento:addMesData(data,k),dataCompra:k===0?data:'',situacao:k===0?'paga':'pendente',dataPagamento:k===0?data:'',...(k===0?arq:{})}); }
+    const ids=chk(await sb.from('despesas').insert(rows.map(x=>({...toDb(x),espaco_id:S.esp}))).select('id')).map(x=>x.id); await recarregar('despesas');
+    return {tipo:'ok',txt:`${desc}: parcela ${A} de ${N} paga, ${N-A} ${N-A===1?'parcela lançada':'parcelas lançadas'} nos próximos meses`,motivo:'nova',desfazer:{t:'despesas',ids,apagar:true}}; }
+  let recorrenciaId='';
+  if(rep==='mensal') recorrenciaId=await inserir('recorrencias',{descricao:desc,valor:r2(valor),categoria:cat,formaPagamento:forma,periodo:'',dia:+data.slice(8,10),inicio:data.slice(0,7),ativo:true,chavePix:r.chave||'',favorecido:nome});
+  const id=await inserir('despesas',{...base,comportamento:rep==='mensal'?'fixa':'variavel',valor:r2(valor),vencimento:data,dataCompra:data,dataPagamento:data,situacao:'paga',parcelas:1,recorrenciaId,...arq});
+  return {tipo:'ok',txt:`${desc} · ${money(valor)} em ${catNome(cat)}${rep==='mensal'?' (conta fixa mensal)':''}`,motivo:'nova',desfazer:{t:'despesas',id,apagar:true,recor:recorrenciaId||null}};
+}
+function mostrarResumoFila(){
+  const f=S.fila; if(!f) return;
+  const ic={ok:'✓',dup:'•',cupom:'•',pulado:'–',erro:'!'};
+  $('#modal').hidden=false;
+  $('#sheet').innerHTML=`<div>${head('Pronto')}</div>
+    ${f.feitos.length?`<div class="resumo-fila">${f.feitos.map((x,i)=>`<div class="rf ${x.tipo}"><span class="rf-ic" aria-hidden="true">${ic[x.tipo]}</span><div><p>${esc(x.txt)}</p>${x.motivo&&x.motivo!=='nova'?`<span class="small muted">Reconhecido por: ${esc(x.motivo)} · fica marcado a conferir</span>`:''}</div>
+      ${x.desfazer&&!x.desfeito?`<button class="btn sm ghost" data-act="rfDesfazer" data-i="${i}">Desfazer</button>`:''}${x.desfeito?'<span class="small muted">desfeito</span>':''}${x.tipo==='cupom'?`<button class="btn sm" data-act="rfCupom" data-i="${i}">Abrir como compra de mercado</button>`:''}</div>`).join('')}</div>`:'<p class="muted">Nada foi lançado.</p>'}
+    <footer><button type="button" class="btn" data-act="rapidoMais">Enviar mais</button><button type="button" class="btn primary" data-act="fechar">Concluir</button></footer>`;
+  modalSubmit=null;
+}
+const acoesRapido = {
+  rapido: () => abrirRapido(),
+  rapidoMais: () => abrirRapido(),
+  enviarComprovante: () => { abrirRapido(); setTimeout(()=>$('#arqRapido')?.click(),50); },
+  rapidoEscolher: () => { const i=$('#arqRapido'); if(i){ i.value=''; i.click(); } },
+  rnTipo: el => { const f=el.closest('form'); f.elements.tipo.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el)));
+    f.querySelectorAll('[data-rn="despesa"]').forEach(x=>x.hidden=el.dataset.v!=='despesa'); f.querySelectorAll('[data-rn="receita"]').forEach(x=>x.hidden=el.dataset.v!=='receita'); f.querySelector('[data-rn="parc"]').hidden = el.dataset.v!=='despesa' || f.elements.rep.value!=='parcelada'; },
+  rnCat: el => el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))),
+  rnRep: el => { const f=el.closest('form'); f.elements.rep.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); f.querySelector('[data-rn="parc"]').hidden=el.dataset.v!=='parcelada'; },
+  rnPular: () => { const r=S.fila?.resolver; if(r){ S.fila.resolver=null; r(null); } },
+  rfDesfazer: async el => { const x=S.fila.feitos[+el.dataset.i], d=x.desfazer; el.disabled=true;
+    try{ if(d.apagar){ const ids=d.ids||[d.id]; const rows=(d.t==='despesas'?S.desp:S.rec).filter(y=>ids.includes(y.id)); await remover(d.t,ids); apagarArquivos(rows.map(y=>y.comprovante)); if(d.recor) await remover('recorrencias',d.recor); }
+      else { const atual=(d.t==='despesas'?S.desp:S.rec).find(y=>y.id===d.id); if(atual?.comprovante && atual.comprovante!==d.patch.comprovante) apagarArquivos([atual.comprovante]); await atualizar(d.t,d.id,d.patch); }
+      x.desfeito=true; mostrarResumoFila(); toast('Lançamento desfeito.'); }catch(e){ dbErr(e); el.disabled=false; } },
+  rfCupom: el => { const file=S.fila.feitos[+el.dataset.i].file; abrirCupom(); const dt=new DataTransfer(); dt.items.add(file); const inp=$('#arqCupom'); inp.files=dt.files; processarCupom(inp); },
+  conferir: async el => { await atualizar(el.dataset.col, el.dataset.id, {conferido:true}); toast('Conferido.'); },
+  conferirTodos: async () => { const d=S.desp.filter(x=>x.conferido===false).map(x=>x.id), r=S.rec.filter(x=>x.conferido===false).map(x=>x.id);
+    if(d.length) chk(await sb.from('despesas').update({conferido:true}).in('id',d).eq('espaco_id',S.esp)); if(r.length) chk(await sb.from('receitas').update({conferido:true}).in('id',r).eq('espaco_id',S.esp));
+    await recarregar('despesas'); await recarregar('receitas'); toast('Tudo conferido.'); }
+};
+function blocoConferir(){
+  const d=S.desp.filter(x=>x.conferido===false), r=S.rec.filter(x=>x.conferido===false);
+  if(!d.length && !r.length) return '';
+  return `<section class="panel conferir"><div class="section-head"><h3 style="margin:0">A conferir (${d.length+r.length})</h3><p>Lançados automaticamente pelos comprovantes</p><div class="right"><button class="btn sm" data-act="conferirTodos">Confirmar todos</button></div></div>
+    <div class="list">${[...d.map(x=>rowDesp(x)),...r.map(x=>rowRec(x))].join('')}</div></section>`;
+}
+
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{
@@ -1473,6 +1617,8 @@ document.addEventListener('submit', async e=>{
   if(tipo==='quiz'){ lerPasso(f); const erro=validarPasso(S.quiz.passo,S.quiz.dados); if(erro){ $('#quizErr').textContent=erro; return; }
     if(S.quiz.passo<PASSOS.length-1){ S.quiz.passo++; S.quiz.max=Math.max(S.quiz.max,S.quiz.passo); render(); window.scrollTo(0,0); return; }
     btn.disabled=true; try{ await salvarPerfilAl(); render(); window.scrollTo(0,0); toast('Perfil salvo. Veja suas metas.'); }catch(x){ $('#quizErr').textContent=erroAmigavel(x); btn.disabled=false; } return; }
+  if(tipo==='rapidoTexto'){ const r=RC().lerTexto(f.elements.t.value,hoje()), err=f.parentElement.querySelector('.err'); if(!r){ if(err) err.textContent='Escreva o gasto e o valor, por exemplo: uber 23,50'; return; } if(err) err.textContent=''; f.elements.t.value=''; processarRapido(null,r); return; }
+  if(tipo==='rapidoNovo'){ btn.disabled=true; try{ const res=await salvarNovoRapido(f); if(typeof res==='string'){ $('#formErr').textContent=res; btn.disabled=false; return; } const rv=S.fila.resolver; S.fila.resolver=null; rv(res); }catch(x){ $('#formErr').textContent=erroAmigavel(x); btn.disabled=false; } return; }
   if(tipo==='cupom'){ btn.disabled=true; try{ const erro=await salvarCupom(f); if(erro){ $('#formErr').textContent=erro; btn.disabled=false; return; } fecharModal(); render(); }catch(x){ const el=$('#formErr'); if(el) el.textContent=erroAmigavel(x); btn.disabled=false; } return; }
   if(tipo==='saldo'){ const v=parseValor(f.elements.valor.value); if(isNaN(v)){ toast('Informe o saldo, por exemplo 1250,00.'); return; }
     try{ await salvarCfg({saldoInicial:r2(v),dataSaldo:f.elements.data.value}); toast('Saldo inicial salvo.'); }catch(x){ dbErr(x); } return; }
@@ -1485,6 +1631,7 @@ document.addEventListener('change', async e=>{
   const t=e.target;
   if(t.id==='arqComp'){ processarAnexo(t); return; }
   if(t.id==='arqCupom'){ processarCupom(t); return; }
+  if(t.id==='arqRapido'){ if(t.files?.length) processarRapido(t.files); return; }
   if(t.closest && t.closest('form[data-form="cupom"]') && /^[tv]\d+$|^(total|desconto)$/.test(t.name)){ lerCupomForm(t.form); renderCupom(); return; }
   if(t.dataset.chg==='cdSlot'){ try{ await mudarCombo(t); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='cdOpcao'){ const pl=structuredClone(planoMes()); pl.semana[+t.dataset.d][t.dataset.ref]=+t.value; try{ await salvarPlano(pl); }catch(x){ dbErr(x); } return; }

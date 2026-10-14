@@ -358,3 +358,28 @@ tr.ignorado td{opacity:.5}
 .cupom-total.diferente{background:var(--warn-soft)}
 .inline-input.estimado::placeholder{color:var(--muted);opacity:.9}
 .economia .val.pos{color:var(--sage)}
+
+/* ---------- lançamento rápido ---------- */
+.drop{display:flex;flex-direction:column;align-items:center;gap:6px;padding:28px 16px;border:1.5px dashed var(--blue);border-radius:14px;background:var(--blue-soft);color:var(--blue);cursor:pointer;text-align:center}
+.drop svg{width:26px;height:26px}
+.drop b{font-size:16px}
+.drop span{font-size:13px;color:var(--muted)}
+.rapido-texto{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.rapido-texto .field{flex:1 1 240px}
+.rapido-bar{border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;background:var(--surface)}
+.rapido-bar .err:empty{display:none}
+.fila-prog{display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 0;color:var(--muted)}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--blue);animation:gira .9s linear infinite}
+@keyframes gira{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+.resumo-fila{display:flex;flex-direction:column;gap:8px}
+.rf{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--surface)}
+.rf p{margin:0;font-size:14px}
+.rf-ic{width:24px;height:24px;border-radius:99px;display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--line);color:var(--fg)}
+.rf.ok .rf-ic{background:var(--sage);color:var(--on-blue)}
+.rf.erro .rf-ic{background:var(--danger);color:var(--on-blue)}
+.rf.dup,.rf.pulado{opacity:.8}
+.pill.conferir{background:var(--warn-soft);color:var(--warn);vertical-align:2px}
+.btn.conf{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.panel.conferir{border-color:var(--warn)}
+form[data-form="rapidoNovo"],form[data-form="cupom"]{display:flex;flex-direction:column;gap:14px}

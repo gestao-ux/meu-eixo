@@ -187,7 +187,7 @@ language sql security definer set search_path = public as $$
     (e,'Marmitas compradas',4,true),(e,'Supermercado',5,true),(e,'Transporte',6,false),
     (e,'Saúde',7,false),(e,'Higiene e cuidados pessoais',8,false),(e,'Vestuário',9,false),
     (e,'Lazer',10,false),(e,'Assinaturas',11,false),(e,'Dívidas e parcelas',12,false),
-    (e,'Educação',13,false),(e,'Outras despesas',14,false);
+    (e,'Educação',13,false),(e,'Outras despesas',14,false),(e,'Limpeza',15,false);
 $$;
 
 -- Cria perfil e espaço pessoal (chamada no cadastro e, por garantia, ao entrar)

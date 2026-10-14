@@ -184,8 +184,9 @@ async function abrirEspaco(id){
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
   S.canal.on('postgres_changes',{event:'*',schema:'public',table:'planos_alimentares',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
   S.canal.on('postgres_changes',{event:'*',schema:'public',table:'listas_compra',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
+  for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
   S.canal.subscribe();
-  S.planos=undefined; carregarAlimentacaoEspaco();
+  S.planos=undefined; carregarAlimentacaoEspaco(); carregarComprasPrecos();
   S.fase='pronto'; render();
 }
 async function entrar(session){
@@ -198,7 +199,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -317,6 +318,7 @@ function vInicio(){
   <div class="actions">
     <button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Adicionar despesa</button>
     <button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button>
+    <button class="btn" data-act="cupomNovo">${icon(I.foto)}Cupom do mercado</button>
     <button class="btn" data-act="novo" data-tipo="receita">${icon(I.plus)}Registrar receita</button>
     <button class="btn" data-act="ir" data-v="planejamento">Planejar dias 10 e 20</button>
     <button class="btn" data-act="ir" data-v="relatorios">Consultar relatórios</button></div>
@@ -327,8 +329,9 @@ function vInicio(){
   <div class="grid2">
     <section class="panel"><h3>Composição das despesas</h3><div class="list">${linha('Despesas fixas',money(rs.fixas))}${linha('Despesas variáveis',money(rs.variaveis))}${linha('Parcelas neste mês',money(rs.parcelas))}${linha('Parcelas a pagar (todos os meses)',money(sum(parcelasFuturas(),d=>d.valor)))}</div></section>
     <section class="panel"><h3>Alimentação no mês</h3><div class="list">${linha('Orçamento alimentar',orcAlim?money(orcAlim):'<span class="muted small">não definido</span>')}${linha('Gasto com alimentação',money(gAlim))}${linha('Marmitas prontas',money(marm))}</div>
-      <p class="note" style="margin:12px 0 0">Custo estimado das marmitas, próxima lista de compras e economia com refeições feitas em casa entram a partir das etapas 5 a 9, quando os cardápios e os preços de Cuiabá estiverem ativos.</p></section>
-  </div>`;
+</section>
+  </div>
+  ${S.planos?.[ym]?`<section><div class="section-head"><h2>Alimentação: gasto e economia</h2><p>${mesLabel(ym)}</p><div class="right"><button class="btn sm" data-act="ir" data-v="compras">Lista de compras</button></div></div>${painelEconomia(ym)}</section>`:''}`;
 }
 
 function vFinanceiro(){
@@ -1155,7 +1158,8 @@ function cdMes(pl){
     <div class="kpi"><span class="lbl">Dias no mês</span><span class="val">${n}</span><span class="sub">${mesLabel(S.mes)}</span></div>
     <div class="kpi"><span class="lbl">Marmitas no mês</span><span class="val">${marmMes}</span><span class="sub">almoço e jantar${(p.pessoas||1)>1?` · ${p.pessoas} pessoas`:''}</span></div>
     <div class="kpi"><span class="lbl">Se fossem prontas</span><span class="val">${pronto?money(pronto):'—'}</span><span class="sub">${p.precoMarmita?`a ${money(p.precoMarmita)} cada`:'informe o preço no perfil'}</span></div>
-    <div class="kpi"><span class="lbl">Custo em casa</span><span class="val">—</span><span class="sub">calculado com os preços da lista</span></div></section>
+    <div class="kpi"><span class="lbl">Custo por dia</span><span class="val">${(()=>{ const cp=custoPlano(pl,S.mes); return cp&&cp.cobertura>0?money(cp.dia):'—'; })()}</span><span class="sub">${(()=>{ const cp=custoPlano(pl,S.mes); return cp&&cp.cobertura>0?(cp.cobertura>=0.95?'todas as refeições, com preços pagos':`estimado (${Math.round(cp.cobertura*100)}% dos itens com preço)`):'envie um cupom para calcular'; })()}</span></div></section>
+  ${painelEconomia(S.mes)}
   <section class="panel"><h3>Quanto você vai consumir em ${MESES[+S.mes.slice(5)-1]}</h3><p class="small muted" style="margin:-4px 0 12px">Alimento pronto, já somando ${p.pessoas>1?`as ${p.pessoas} pessoas`:'todas as refeições do mês'}.</p>
     ${Object.keys(GRUPO_NOME).filter(g=>grupos[g]).map(g=>`<h4 class="grupo-h">${GRUPO_NOME[g]}</h4><div class="list">${grupos[g].sort((a,b)=>b.g-a.g).map(x=>linha(esc(x.nome), x.a.u?`${Math.round(x.g/x.a.u)} ${x.a.un[1]}`:(x.g>=1000?(Math.round(x.g/100)/10).toString().replace('.',',')+' kg':Math.round(x.g/10)*10+' g'))).join('')}</div>`).join('')}
   </section>
@@ -1215,24 +1219,35 @@ function vCompras(){
   if(S.planos===undefined) return `<div class="empty"><strong>Carregando…</strong></div>`;
   const pl=planoMes();
   if(!pl) return `<div class="empty"><strong>Sem cardápio em ${mesLabel(S.mes)}</strong>A lista é gerada a partir do cardápio do mês.<div class="actions" style="justify-content:center;margin-top:12px"><button class="btn primary" data-act="ir" data-v="cardapios">Montar cardápio</button></div></div>`;
+  if(S.lcTab==='historico') return `<div class="tabs" role="tablist"><button role="tab" aria-selected="false" data-act="lcTab" data-v="mensal">Compra do mês</button><button role="tab" aria-selected="false" data-act="lcTab" data-v="semanal">Reposição semanal</button><button role="tab" aria-selected="true" data-act="lcTab" data-v="historico">Compras e preços</button></div>${painelEconomia(S.mes)}${vHistoricoCompras()}`;
   const tipo=S.lcTab||'mensal', chave=`${S.mes}:${tipo}`, est=S.listas?.[chave]||{};
   const L=CD().listas(pl,calcDe(pl),perfDe(pl),diasNoMes(S.mes)), itens=L[tipo];
   const ativos=itens.filter(i=>!est[i.id]?.tenho), comprados=ativos.filter(i=>est[i.id]?.ok);
-  const comPreco=ativos.filter(i=>est[i.id]?.preco>0), total=sum(comPreco,i=>est[i.id].preco);
+  const estim=i=> est[i.id]?.preco>0 ? est[i.id].preco : CP().custoLinhaLista(i,S.precos||[],CD().C);
+  const comPreco=ativos.filter(i=>estim(i)!=null), total=sum(comPreco,i=>estim(i));
   const grupos={}; itens.forEach(i=>(grupos[i.grupo]=grupos[i.grupo]||[]).push(i));
-  return `<div class="tabs" role="tablist"><button role="tab" aria-selected="${tipo==='mensal'}" data-act="lcTab" data-v="mensal">Compra do mês (${L.mensal.length})</button><button role="tab" aria-selected="${tipo==='semanal'}" data-act="lcTab" data-v="semanal">Reposição semanal (${L.semanal.length})</button></div>
+  return `<div class="tabs" role="tablist"><button role="tab" aria-selected="${tipo==='mensal'}" data-act="lcTab" data-v="mensal">Compra do mês (${L.mensal.length})</button><button role="tab" aria-selected="${tipo==='semanal'}" data-act="lcTab" data-v="semanal">Reposição semanal (${L.semanal.length})</button><button role="tab" aria-selected="false" data-act="lcTab" data-v="historico">Compras e preços</button></div>
+  <div class="actions"><button class="btn primary" data-act="cupomNovo">${icon(I.foto)}Enviar cupom fiscal</button></div>
+  ${painelEconomia(S.mes)}
   <section class="kpis macros">
     <div class="kpi"><span class="lbl">Itens</span><span class="val">${comprados.length}/${ativos.length}</span><span class="sub">comprados${itens.length-ativos.length?` · ${itens.length-ativos.length} já em casa`:''}</span></div>
-    <div class="kpi"><span class="lbl">Total com preço</span><span class="val">${money(total)}</span><span class="sub">${comPreco.length} de ${ativos.length} itens com preço</span></div>
+    <div class="kpi"><span class="lbl">Total estimado</span><span class="val">${money(total)}</span><span class="sub">${comPreco.length} de ${ativos.length} itens com preço</span></div>
     <div class="kpi"><span class="lbl">Mercados</span><span class="val" style="font-size:18px">Comper · Big Lar</span><span class="sub">Cuiabá</span></div>
     <div class="kpi"><span class="lbl">${tipo==='mensal'?'Para':'Para'}</span><span class="val" style="font-size:18px">${tipo==='mensal'?mesLabel(S.mes):'7 dias'}</span><span class="sub">${tipo==='mensal'?'itens duráveis e proteínas para congelar':'frutas, legumes, verduras e frescos'}</span></div></section>
-  <p class="note" style="margin:0">Preencha o preço ao comprar, ou envie a foto do cupom fiscal (próxima atualização): os valores pagos entram aqui e passam a ser usados nas próximas estimativas. Os preços de referência de Cuiabá chegam na próxima etapa.</p>
+  <p class="note" style="margin:0">Ao voltar do mercado, envie a foto do cupom: os itens são marcados aqui com o valor pago, e os preços passam a estimar as próximas compras. Valores em cinza são estimativas pelo último preço pago.</p>
   ${Object.keys(GRUPO_NOME).filter(g=>grupos[g]).map(g=>`<section class="panel lista"><h3>${GRUPO_NOME[g]}</h3>${grupos[g].map(i=>{ const e=est[i.id]||{};
     return `<div class="lc ${e.ok?'ok':''} ${e.tenho?'tenho':''}"><button class="lc-check" data-act="lcOk" data-id="${i.id}" aria-pressed="${!!e.ok}" aria-label="Marcar ${esc(i.nome)} como comprado" ${e.tenho?'disabled':''}>${icon(I.check)}</button>
       <div class="lc-t"><b>${esc(i.nome)}</b><span>${esc(i.txt)}${i.sub?' · '+esc(i.sub):''}</span></div>
-      <input class="inline-input num" inputmode="decimal" placeholder="R$" aria-label="Preço pago: ${esc(i.nome)}" data-lcpreco="${i.id}" value="${e.preco?fmtInput(e.preco):''}" ${e.tenho?'disabled':''}>
+      <input class="inline-input num" inputmode="decimal" placeholder="${estim(i)!=null?'≈ '+fmtInput(estim(i)):'R$'}" aria-label="Preço pago: ${esc(i.nome)}" data-lcpreco="${i.id}" value="${e.preco?fmtInput(e.preco):''}" ${e.tenho?'disabled':''}>
       <button class="btn sm ghost" data-act="lcTenho" data-id="${i.id}">${e.tenho?'Comprar':'Já tenho'}</button></div>`; }).join('')}</section>`).join('')}
   <div class="actions">${tipo==='semanal'?`<button class="btn" data-act="lcLimpar">Começar nova semana</button>`:''}<button class="btn" data-act="ir" data-v="cardapios">Voltar ao cardápio</button></div>`;
+}
+async function precoManual(id, valor){
+  const pl=planoMes(); if(!pl) return; const L=CD().listas(pl,calcDe(pl),perfDe(pl),diasNoMes(S.mes)); const it=[...L.mensal,...L.semanal].find(x=>x.id===id); if(!it) return;
+  const a=CD().C[id]; const q = it.und==='kg' ? {gramas:it.qtd*1000} : it.und==='pct' ? {gramas:it.qtd*a.cp.emb} : {unidades:it.qtd};
+  chk(await sb.from('precos').delete().eq('espaco_id',S.esp).eq('alimento_id',id).eq('origem','manual').eq('data',hoje()));
+  chk(await sb.from('precos').insert({espaco_id:S.esp,alimento_id:id,data:hoje(),valor,origem:'manual',...q}));
+  await carregarComprasPrecos();
 }
 async function salvarLista(chave, novo){ S.listas={...S.listas,[chave]:novo}; render(); chk(await sb.from('listas_compra').upsert({espaco_id:S.esp,chave,itens:novo,atualizado_em:new Date().toISOString()},{onConflict:'espaco_id,chave'})); }
 function alterarItem(id, patch){ const chave=`${S.mes}:${S.lcTab||'mensal'}`, est={...(S.listas?.[chave]||{})}; est[id]={...(est[id]||{}),...patch}; return salvarLista(chave,est); }
@@ -1262,7 +1277,174 @@ async function mudarCombo(t){
   await salvarPlano(pl);
 }
 
-Object.assign(acoes, acoesAl, acoesCd);
+/* ---------- cupom fiscal, preços e economia ---------- */
+const CP = () => window.MeuEixoCupom;
+async function carregarComprasPrecos(){
+  const id=S.esp;
+  try{
+    const c=chk(await sb.from('compras').select('*').eq('espaco_id',id).order('data',{ascending:false}).limit(200));
+    const p=chk(await sb.from('precos').select('alimento_id,data,valor,gramas,unidades,origem,estabelecimento').eq('espaco_id',id).order('data',{ascending:false}).limit(1000));
+    if(S.esp!==id) return; S.compras=c.map(fromDb); S.precos=p; S.alErro5=false;
+  }catch(e){ console.error(e); S.compras=[]; S.precos=[]; S.alErro5=true; }
+  schedule();
+}
+const catPorNome = (...nomes) => { for(const n of nomes){ const c=S.cats.find(x=>x.nome.toLowerCase()===n.toLowerCase()); if(c) return c.id; } return null; };
+const DESTINOS = [['outro_alimento','Outro alimento'],['limpeza','Limpeza'],['higiene','Higiene e cuidados pessoais'],['outros','Outros (não alimento)'],['ignorar','Não registrar']];
+
+function abrirCupom(){
+  if(S.alErro5){ toast('Execute primeiro a atualização 005 do banco no Supabase.'); return; }
+  S.cupom=null;
+  abrirModal(`<div>${head('Enviar cupom fiscal')}</div>
+    <input type="file" id="arqCupom" accept="image/*,application/pdf" hidden>
+    <div class="cupom-dica"><b>Para uma boa leitura</b><ul><li>Fotografe o cupom inteiro, reto, sobre uma superfície escura e com boa luz.</li><li>Se o cupom for longo, pode enviar em PDF ou print da NFC-e no app do mercado.</li><li>Você confere todos os itens antes de salvar.</li></ul></div>
+    <p class="small muted" id="cupomStatus" style="margin:0"></p>
+    <footer><button type="button" class="btn" data-act="fechar">Cancelar</button><button type="button" class="btn primary" data-act="cupomEscolher">${icon(I.foto)}Escolher foto ou arquivo</button></footer>`,null);
+  $('#sheet').classList.add('larga');
+}
+async function processarCupom(input){
+  const arq=input.files?.[0]; if(!arq) return; const st=$('#cupomStatus');
+  if(arq.size>10*1024*1024){ st.textContent='O arquivo passa de 10 MB. Envie uma foto menor.'; return; }
+  st.textContent='Lendo o cupom… isso pode levar até 1 minuto na primeira vez.';
+  let hash=null; try{ hash=await LEITOR().hash(arq); }catch(_){}
+  let r;
+  try{ const texto=await LEITOR().textoDe(arq,p=>{ st.textContent=`Lendo o cupom… ${p}%`; },true); r=CP().interpretarCupom(texto); }
+  catch(e){ console.error(e); st.textContent='Não consegui ler este arquivo. Você pode lançar os itens manualmente na próxima tela.'; r={itens:[],total:null,desconto:0,data:null,loja:'',cnpj:'',chave:'',forma:''}; }
+  const itens=r.itens.map(i=>{ const s=CP().sugerir(i.descricao); return {...i,...s}; });
+  S.cupom={file:arq, hash, ...r, itens: itens.length?itens:[{descricao:'',quantidade:1,unidade:'UN',valorTotal:null,destino:'outro_alimento',confere:true}], data:r.data||hoje(), forma:r.forma||'Débito'};
+  renderCupom();
+}
+function opcoesDestino(it){
+  const C=CD().C, p=S.perfilAl||{};
+  const alim=Object.keys(C).filter(id=>id!=='azeite'||true).sort((a,b)=>C[a].n.localeCompare(C[b].n,'pt'));
+  const v = it.destino==='alimento' ? 'a:'+it.alimento_id : it.destino;
+  return `<optgroup label="Alimentos do cardápio">${alim.map(id=>`<option value="a:${id}" ${v==='a:'+id?'selected':''}>${esc(C[id].n)}</option>`).join('')}</optgroup><optgroup label="Outros">${DESTINOS.map(([k,t])=>`<option value="${k}" ${v===k?'selected':''}>${t}</option>`).join('')}</optgroup>`;
+}
+function renderCupom(){
+  const c=S.cupom, soma=r2(c.itens.filter(i=>i.destino!=='ignorar').reduce((a,i)=>a+(+i.valorTotal||0),0));
+  const pagar = c.total!=null ? r2(c.total-(+c.desconto||0)) : null;
+  const dif = c.total!=null ? r2(soma-c.total) : null;
+  const dup = (S.compras||[]).find(x=>(c.chave&&x.chaveAcesso===c.chave)||(c.hash&&x.comprovanteHash===c.hash));
+  $('#sheet').innerHTML=`<form data-form="cupom">${head('Conferir compra')}
+    ${dup?`<div class="alert warn"><span class="dot"></span><div><p>Este cupom já foi registrado em ${dataBR(dup.data)} (${money(dup.total)}). Salvar de novo vai duplicar o gasto.</p></div></div>`:''}
+    <div class="form-grid cupom-cab">
+      <div class="field"><label for="cLoja">Mercado</label><input id="cLoja" name="loja" value="${esc(c.loja)}" placeholder="Ex.: Comper"></div>
+      <div class="field"><label for="cData">Data da compra</label><input id="cData" name="data" type="date" value="${c.data}"></div>
+      <div class="field"><label for="cForma">Forma de pagamento</label><select id="cForma" name="forma">${opts(FORMAS.map(x=>[x,x]),c.forma)}</select></div>
+      <div class="field"><label for="cTotal">Total dos itens no cupom (R$)</label><input id="cTotal" name="total" inputmode="decimal" value="${c.total!=null?fmtInput(c.total):''}"></div>
+      <div class="field"><label for="cDesc">Desconto (R$)</label><input id="cDesc" name="desconto" inputmode="decimal" value="${c.desconto?fmtInput(c.desconto):''}"></div>
+    </div>
+    <div class="scroll"><table class="cupom-itens"><thead><tr><th>Item do cupom</th><th class="r">Qtd</th><th>Un</th><th class="r">Valor (R$)</th><th>É o quê?</th><th></th></tr></thead><tbody>
+    ${c.itens.map((it,i)=>`<tr class="${it.confere===false?'atencao':''} ${it.destino==='ignorar'?'ignorado':''}">
+      <td><input name="d${i}" value="${esc(it.descricao)}" aria-label="Descrição do item ${i+1}"></td>
+      <td><input name="q${i}" class="r" inputmode="decimal" value="${String(it.quantidade??1).replace('.',',')}" aria-label="Quantidade"></td>
+      <td><input name="u${i}" class="un" value="${esc(it.unidade||'UN')}" aria-label="Unidade"></td>
+      <td><input name="v${i}" class="r" inputmode="decimal" value="${it.valorTotal!=null?fmtInput(it.valorTotal):''}" aria-label="Valor total"></td>
+      <td><select name="t${i}" aria-label="Classificação">${opcoesDestino(it)}</select></td>
+      <td><button type="button" class="btn sm ghost" data-act="cupomDel" data-i="${i}" aria-label="Remover item">${icon(I.trash)}</button></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="actions"><button type="button" class="btn sm" data-act="cupomAdd">${icon(I.plus)}Adicionar item</button></div>
+    <div class="cupom-total ${dif!==null&&Math.abs(dif)>0.05?'diferente':''}">
+      <span>Soma dos itens: <b>${money(soma)}</b>${c.total!=null?` · total do cupom: <b>${money(c.total)}</b>${c.desconto?` · a pagar: <b>${money(pagar)}</b>`:''}`:''}</span>
+      <span>${dif===null?'Informe o total do cupom para conferir.':Math.abs(dif)<=0.05?'Os valores conferem.':`Diferença de ${money(Math.abs(dif))}: ${dif>0?'sobra':'falta'} algum item ou valor.`}</span></div>
+    <p class="small muted" style="margin:0">Itens em amarelo: quantidade × preço não bate com o total da linha. Itens “Não registrar” ficam fora dos gastos. Ao salvar, a compra vira despesa paga (alimentos em Supermercado, limpeza e higiene em suas categorias), os preços entram no histórico e os itens são marcados na lista de compras.</p>
+    ${rodape('Salvar compra')}</form>`;
+  $('#sheet').classList.add('larga');
+}
+function lerCupomForm(f){
+  const E=f.elements, c=S.cupom;
+  c.loja=E.loja.value.trim(); c.data=E.data.value; c.forma=E.forma.value;
+  c.total=E.total.value.trim()?parseValor(E.total.value):null; c.desconto=E.desconto.value.trim()?parseValor(E.desconto.value):0;
+  c.itens=c.itens.map((it,i)=>{ const t=E['t'+i].value; const q=parseValor(E['q'+i].value), v=parseValor(E['v'+i].value);
+    return {...it, descricao:E['d'+i].value.trim(), quantidade:isNaN(q)?1:q, unidade:E['u'+i].value.trim().toUpperCase()||'UN', valorTotal:isNaN(v)?null:v,
+      destino: t.startsWith('a:')?'alimento':t, alimento_id: t.startsWith('a:')?t.slice(2):null}; });
+}
+async function salvarCupom(f){
+  lerCupomForm(f); const c=S.cupom;
+  const itens=c.itens.filter(i=>i.destino!=='ignorar' && i.descricao);
+  if(!itens.length) return 'Inclua pelo menos um item.';
+  if(itens.some(i=>!(i.valorTotal>0))) return 'Há item sem valor. Preencha ou marque como “Não registrar”.';
+  if(!c.data) return 'Informe a data da compra.';
+  const soma=r2(itens.reduce((a,i)=>a+i.valorTotal,0)), desc=+c.desconto||0, fator=soma>0?(soma-desc)/soma:1;
+  const grupos={alimentos:0,limpeza:0,higiene:0,outros:0};
+  itens.forEach(i=>{ const g=i.destino==='alimento'||i.destino==='outro_alimento'?'alimentos':i.destino; grupos[g]+=i.valorTotal; });
+  anexo={file:c.file, hash:c.hash}; const arq=await enviarArquivo(); anexo=null;
+  const loja=c.loja||'mercado', cats={alimentos:catPorNome('Supermercado','Alimentação'), limpeza:catPorNome('Limpeza','Outras despesas'), higiene:catPorNome('Higiene e cuidados pessoais','Outras despesas'), outros:catPorNome('Outras despesas')};
+  const nomes={alimentos:'alimentos',limpeza:'limpeza',higiene:'higiene',outros:'outros itens'};
+  const linhas=Object.entries(grupos).filter(([,v])=>v>0).map(([g,v])=>({descricao:`Mercado ${loja}: ${nomes[g]}`, valor:r2(v*fator), categoria:cats[g]||'', comportamento:'variavel', formaPagamento:c.forma, dataCompra:c.data, vencimento:c.data, dataPagamento:c.data, situacao:'paga', periodo:'', parcelas:1, obs:'Lançado pelo cupom fiscal', ...(arq||{})}));
+  const totPago=r2(linhas.reduce((a,x)=>a+x.valor,0)), alvo=r2(soma-desc); if(linhas.length && totPago!==alvo) linhas[0].valor=r2(linhas[0].valor+alvo-totPago);
+  const desp=chk(await sb.from('despesas').insert(linhas.map(r=>({...toDb(r),espaco_id:S.esp}))).select('id'));
+  const compra=chk(await sb.from('compras').insert({espaco_id:S.esp,data:c.data,estabelecimento:c.loja,cnpj:c.cnpj||'',total:soma,desconto:desc,forma_pagamento:c.forma,chave_acesso:c.chave||null,comprovante:arq?.comprovante||null,comprovante_hash:c.hash||null,despesa_ids:desp.map(x=>x.id)}).select('id').single());
+  const linhasItens=itens.map(i=>{ const m=CP().medidas(i,CD().C); return {compra_id:compra.id,espaco_id:S.esp,descricao:i.descricao,destino:i.destino,alimento_id:i.alimento_id||null,quantidade:i.quantidade,unidade:i.unidade,valor_total:i.valorTotal,gramas:m.gramas,unidades:m.unidades}; });
+  const ins=chk(await sb.from('compra_itens').insert(linhasItens).select('id,alimento_id,valor_total,gramas,unidades'));
+  const precos=ins.filter(x=>x.alimento_id && (x.gramas>0||x.unidades>0)).map(x=>({espaco_id:S.esp,alimento_id:x.alimento_id,data:c.data,valor:r2(x.valor_total*fator),gramas:x.gramas,unidades:x.unidades,origem:'cupom',estabelecimento:c.loja,compra_item_id:x.id}));
+  if(precos.length) chk(await sb.from('precos').insert(precos));
+  // marca na lista de compras do mês da compra
+  const ym=c.data.slice(0,7), pl=S.planos?.[ym];
+  if(pl){ const L=CD().listas(pl,calcDe(pl),perfDe(pl),diasNoMes(ym));
+    for(const tipo of ['mensal','semanal']){ const chave=`${ym}:${tipo}`, est={...(S.listas?.[chave]||{})}; let mudou=false;
+      itens.filter(i=>i.alimento_id && L[tipo].some(x=>x.id===i.alimento_id)).forEach(i=>{ const e=est[i.alimento_id]||{}; est[i.alimento_id]={...e,ok:true,preco:r2((e.cupom?e.preco||0:0)+i.valorTotal*fator),cupom:true}; mudou=true; });
+      if(mudou) await salvarLista(chave,est); } }
+  await recarregar('despesas'); await carregarComprasPrecos();
+  const nAl=itens.filter(i=>i.alimento_id).length;
+  S.cupom=null; toast(`Compra salva: ${money(alvo)}. ${nAl} ${nAl===1?'alimento entrou':'alimentos entraram'} no histórico de preços.`);
+}
+
+/* ---------- custo e economia ---------- */
+function custoPlano(pl, ym){
+  if(!pl) return null;
+  const calc=calcDe(pl), p=perfDe(pl), precos=S.precos||[], C=CD().C, pes=Math.max(1,+p.pessoas||1);
+  let semana=0, gTot=0, gComPreco=0, marmCusto=0, marmN=0; const faltam=new Set(); let marmCompleta=true;
+  for(let d=0;d<7;d++) CD().dia(pl,d,calc,p).refeicoes.forEach(r=>{ let cr=0;
+    r.itens.forEach(i=>{ const v=CP().custoConsumo(i.id,i.g,precos,C); gTot+=i.g; if(v!=null){ cr+=v; gComPreco+=i.g; } else { faltam.add(i.id); if(r.marmita) marmCompleta=false; } });
+    semana+=cr; if(r.marmita){ marmN++; marmCusto+=cr; } });
+  const dias=diasNoMes(ym), cob=gTot?gComPreco/gTot:0;
+  const marmMedia = marmN && gComPreco>0 ? marmCusto/marmN : null;
+  const marmMes = Math.round(marmN/7*dias*pes);
+  return {dia:semana/7*pes, mes:semana/7*dias*pes, cobertura:cob, marmMedia, marmCompleta, marmMes, faltam:[...faltam].map(id=>C[id].cp.n)};
+}
+function resumoGastoAlimentar(ym){
+  const D=despMes(ym).filter(ativa), alim=new Set(S.cats.filter(c=>c.alimentacao).map(c=>c.id)), marmCat=catPorNome('Marmitas compradas');
+  const total=sum(D.filter(d=>alim.has(d.categoria)),d=>d.valor), prontas=sum(D.filter(d=>d.categoria===marmCat),d=>d.valor);
+  return {total, prontas, mercado:r2(total-prontas)};
+}
+function painelEconomia(ym){
+  const pl=S.planos?.[ym], cp=custoPlano(pl,ym), g=resumoGastoAlimentar(ym);
+  const p=pl?.ctx||{}, pronta=(S.perfilAl?.precoMarmita)||p.precoMarmita||null, orc=(S.perfilAl?.orcamento)||p.orcamento||null;
+  const h=hoje(), dm=diasNoMes(ym), passados = ym<h.slice(0,7) ? dm : ym>h.slice(0,7) ? 0 : +h.slice(8,10);
+  const econUn = (pronta && cp?.marmMedia!=null && cp.marmCompleta) ? pronta-cp.marmMedia : null;
+  const econMes = econUn!=null ? econUn*cp.marmMes : null, econHoje = econMes!=null ? econMes*passados/dm : null;
+  const cob = cp ? Math.round(cp.cobertura*100) : 0;
+  return `<section class="kpis macros economia">
+    <div class="kpi"><span class="lbl">Gasto com alimentação</span><span class="val">${money(g.total)}</span><span class="sub">${g.prontas?`${money(g.mercado)} mercado · ${money(g.prontas)} marmitas prontas`:`em ${mesLabel(ym)}`}${orc?` · orçamento ${money(orc)}`:''}</span></div>
+    <div class="kpi"><span class="lbl">Custo planejado do mês</span><span class="val">${cp&&cob>0?money(cp.mes):'—'}</span><span class="sub">${cp?(cob>=95?'com preços pagos':cob>0?`estimado com ${cob}% dos itens com preço`:'envie um cupom para calcular'):'sem cardápio no mês'}</span></div>
+    <div class="kpi"><span class="lbl">Marmita feita em casa</span><span class="val">${cp?.marmMedia!=null?money(cp.marmMedia):'—'}</span><span class="sub">${cp?.marmMedia!=null&&!cp.marmCompleta?`parcial: faltam preços de ${cp.faltam.length} ${cp.faltam.length>1?'itens':'item'}`:pronta?`pronta custa ${money(pronta)}`:'informe o preço da pronta no perfil'}</span></div>
+    <div class="kpi"><span class="lbl">Economia</span><span class="val ${econHoje>0?'pos':''}">${econHoje!=null?money(econHoje):'—'}</span><span class="sub">${econMes!=null?`até hoje · ${money(econMes)} no mês (${cp.marmMes} marmitas)`:'aparece quando todos os ingredientes das marmitas tiverem preço'}</span></div>
+  </section>${cp&&cp.faltam.length&&cp.cobertura>0?`<p class="small muted" style="margin:-12px 0 0">Ainda sem preço: ${cp.faltam.slice(0,8).map(esc).join(', ')}${cp.faltam.length>8?'…':''}. Eles entram no cálculo no próximo cupom ou ao digitar o preço na lista.</p>`:''}`;
+}
+
+/* ---------- histórico de compras e preços ---------- */
+function vHistoricoCompras(){
+  if(S.alErro5) return `<div class="empty"><strong>Histórico indisponível</strong>Execute a atualização <b>005_compras_precos.sql</b> no Supabase.</div>`;
+  const C=CD().C, precos=S.precos||[];
+  const ids=[...new Set(precos.map(p=>p.alimento_id))].filter(id=>C[id]).sort((a,b)=>C[a].n.localeCompare(C[b].n,'pt'));
+  const linhaPreco=id=>{ const lst=precos.filter(p=>p.alimento_id===id); const at=CP().precoAtual(id,lst,C), ant=lst.length>1?CP().precoAtual(id,lst.slice(1),C):null;
+    const usaUn=C[id].cp.und==='un' && at.porUn!=null; const v=usaUn?at.porUn:at.porKg, va=ant?(usaUn?ant.porUn:ant.porKg):null; const varp=va?((v-va)/va*100):null;
+    return `<tr><td>${esc(C[id].cp.n)}</td><td class="r">${money(v)}<span class="muted"> /${usaUn?(id==='ovo'?'ovo':'un'):'kg'}</span></td><td class="r ${varp>0.5?'neg':varp<-0.5?'pos':''}">${varp==null?'—':(varp>0?'+':'')+varp.toFixed(1).replace('.',',')+'%'}</td><td>${dataBR(at.data)}${at.loja?' · '+esc(at.loja):''}</td></tr>`; };
+  return `<section class="panel"><div class="section-head"><h3 style="margin:0">Compras registradas</h3><div class="right"><button class="btn sm primary" data-act="cupomNovo">${icon(I.foto)}Enviar cupom fiscal</button></div></div>
+    ${(S.compras||[]).length?`<div class="list">${S.compras.slice(0,30).map(c=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(c.estabelecimento||'Mercado')}</div><div class="meta"><span>${dataBR(c.data)}</span><span>${esc(c.formaPagamento||'')}</span>${c.desconto>0?`<span>desconto ${money(c.desconto)}</span>`:''}</div></div><div class="v">${money(c.total-(+c.desconto||0))}${c.comprovante?`<div><button class="btn sm ghost" data-act="verComp" data-path="${esc(c.comprovante)}">Ver cupom</button></div>`:''}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma compra registrada ainda. Envie a foto do cupom ao voltar do mercado.</p>`}</section>
+  <section class="panel"><h3>Preços que você pagou</h3>
+    ${ids.length?`<div class="scroll"><table><thead><tr><th>Produto</th><th class="r">Último preço</th><th class="r">Variação</th><th>Quando e onde</th></tr></thead><tbody>${ids.map(linhaPreco).join('')}</tbody></table></div>
+    <p class="small muted" style="margin:8px 0 0">Variação em relação à compra anterior do mesmo produto. Estes preços são usados para estimar o custo do cardápio e da lista.</p>`:`<p class="muted small">Os preços aparecem aqui a partir do primeiro cupom.</p>`}</section>`;
+}
+
+const acoesCupom = {
+  cupomNovo: () => abrirCupom(),
+  cupomEscolher: () => { const i=$('#arqCupom'); if(i){ i.value=''; i.click(); } },
+  cupomAdd: () => { lerCupomForm($('form[data-form="cupom"]')); S.cupom.itens.push({descricao:'',quantidade:1,unidade:'UN',valorTotal:null,destino:'outro_alimento',confere:true}); renderCupom(); },
+  cupomDel: el => { lerCupomForm($('form[data-form="cupom"]')); S.cupom.itens.splice(+el.dataset.i,1); renderCupom(); }
+};
+
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{
@@ -1291,6 +1473,7 @@ document.addEventListener('submit', async e=>{
   if(tipo==='quiz'){ lerPasso(f); const erro=validarPasso(S.quiz.passo,S.quiz.dados); if(erro){ $('#quizErr').textContent=erro; return; }
     if(S.quiz.passo<PASSOS.length-1){ S.quiz.passo++; S.quiz.max=Math.max(S.quiz.max,S.quiz.passo); render(); window.scrollTo(0,0); return; }
     btn.disabled=true; try{ await salvarPerfilAl(); render(); window.scrollTo(0,0); toast('Perfil salvo. Veja suas metas.'); }catch(x){ $('#quizErr').textContent=erroAmigavel(x); btn.disabled=false; } return; }
+  if(tipo==='cupom'){ btn.disabled=true; try{ const erro=await salvarCupom(f); if(erro){ $('#formErr').textContent=erro; btn.disabled=false; return; } fecharModal(); render(); }catch(x){ const el=$('#formErr'); if(el) el.textContent=erroAmigavel(x); btn.disabled=false; } return; }
   if(tipo==='saldo'){ const v=parseValor(f.elements.valor.value); if(isNaN(v)){ toast('Informe o saldo, por exemplo 1250,00.'); return; }
     try{ await salvarCfg({saldoInicial:r2(v),dataSaldo:f.elements.data.value}); toast('Saldo inicial salvo.'); }catch(x){ dbErr(x); } return; }
   if(!modalSubmit) return;
@@ -1301,9 +1484,11 @@ document.addEventListener('submit', async e=>{
 document.addEventListener('change', async e=>{
   const t=e.target;
   if(t.id==='arqComp'){ processarAnexo(t); return; }
+  if(t.id==='arqCupom'){ processarCupom(t); return; }
+  if(t.closest && t.closest('form[data-form="cupom"]') && /^[tv]\d+$|^(total|desconto)$/.test(t.name)){ lerCupomForm(t.form); renderCupom(); return; }
   if(t.dataset.chg==='cdSlot'){ try{ await mudarCombo(t); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='cdOpcao'){ const pl=structuredClone(planoMes()); pl.semana[+t.dataset.d][t.dataset.ref]=+t.value; try{ await salvarPlano(pl); }catch(x){ dbErr(x); } return; }
-  if(t.dataset.lcpreco){ const v=t.value.trim()===''?null:parseValor(t.value); if(v!==null&&(isNaN(v)||v<0)){ toast('Preço inválido.'); return; } try{ await alterarItem(t.dataset.lcpreco,{preco:v===null?null:r2(v), ...(v>0?{ok:true}:{})}); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.lcpreco){ const v=t.value.trim()===''?null:parseValor(t.value); if(v!==null&&(isNaN(v)||v<0)){ toast('Preço inválido.'); return; } try{ await alterarItem(t.dataset.lcpreco,{preco:v===null?null:r2(v), ...(v>0?{ok:true}:{})}); if(v>0 && !S.alErro5) await precoManual(t.dataset.lcpreco, r2(v)); }catch(x){ dbErr(x); } return; }
   if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
   else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }

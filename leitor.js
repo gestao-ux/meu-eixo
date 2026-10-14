@@ -130,13 +130,22 @@ async function ocr(imagem){
   const { data } = await worker.recognize(imagem);
   return data.text || '';
 }
-async function imagemReduzida(arquivo){
+async function imagemReduzida(arquivo, cupom){
   const url=URL.createObjectURL(arquivo);
   try{
     const img=await new Promise((ok,err)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=()=>err(new Error('Não foi possível abrir a imagem. Use JPG, PNG ou PDF.')); i.src=url; });
-    const max=2200, k=Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
+    // cupom térmico: estreito e comprido; amplia a largura para ~1400 px para o OCR ler os números
+    const max=cupom?4200:2200; let k=Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
+    if(cupom && img.naturalWidth*k<1400) k=Math.min(2.5,1400/img.naturalWidth);
     const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*k); c.height=Math.round(img.naturalHeight*k);
     const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img,0,0,c.width,c.height);
+    if(cupom){ // tons de cinza com contraste reforçado (papel térmico costuma ser apagado)
+      const d=ctx.getImageData(0,0,c.width,c.height), px=d.data; let soma=0;
+      for(let i=0;i<px.length;i+=4){ const g=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2]; px[i]=g; soma+=g; }
+      const media=soma/(px.length/4);
+      for(let i=0;i<px.length;i+=4){ let g=px[i]; g=(g-media)*1.8+150; g=g<0?0:g>255?255:g; px[i]=px[i+1]=px[i+2]=g; }
+      ctx.putImageData(d,0,0);
+    }
     return c;
   } finally { URL.revokeObjectURL(url); }
 }
@@ -155,16 +164,16 @@ async function textoDoPdf(arquivo){
   await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
   return ocr(c);
 }
-async function ler(arquivo, progresso){
+async function textoDe(arquivo, progresso, cupom){
   aoProgresso=progresso||null;
   const pdf = arquivo.type==='application/pdf' || /\.pdf$/i.test(arquivo.name||'');
-  const texto = pdf ? await textoDoPdf(arquivo) : await ocr(await imagemReduzida(arquivo));
-  return interpretar(texto);
+  return pdf ? await textoDoPdf(arquivo) : await ocr(await imagemReduzida(arquivo, cupom));
 }
+async function ler(arquivo, progresso){ return interpretar(await textoDe(arquivo, progresso, false)); }
 async function hash(arquivo){
   const buf=await crypto.subtle.digest('SHA-256', await arquivo.arrayBuffer());
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-window.MeuEixoLeitor = { ler, interpretar, hash };
+window.MeuEixoLeitor = { ler, interpretar, hash, textoDe };
 })();

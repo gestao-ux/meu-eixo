@@ -339,3 +339,22 @@ table.prep{margin-top:12px}
 .lc.tenho{opacity:.5}
 .lc .inline-input{width:96px}
 @media (max-width:520px){ .lc{grid-template-columns:auto minmax(0,1fr) 80px} .lc .btn{grid-column:2/-1;justify-self:start;padding-left:0} .lc .inline-input{width:80px} }
+
+/* ---------- cupom fiscal ---------- */
+.sheet.larga{width:min(1000px,100%)}
+.cupom-dica{background:var(--surface);border-radius:12px;padding:14px 16px;font-size:14px}
+.cupom-dica ul{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;color:var(--muted)}
+.cupom-cab{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+table.cupom-itens{min-width:760px}
+table.cupom-itens td{padding:5px 4px}
+table.cupom-itens input,table.cupom-itens select{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 8px;background:var(--bg);font-size:13.5px}
+table.cupom-itens td:nth-child(1){width:38%}
+table.cupom-itens td:nth-child(2){width:70px} table.cupom-itens td:nth-child(3){width:58px} table.cupom-itens td:nth-child(4){width:96px}
+table.cupom-itens input.r{text-align:right;font-variant-numeric:tabular-nums}
+table.cupom-itens input.un{text-transform:uppercase}
+tr.atencao td{background:var(--warn-soft)}
+tr.ignorado td{opacity:.5}
+.cupom-total{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:12px 14px;border-radius:10px;background:var(--sage-soft);font-size:14px}
+.cupom-total.diferente{background:var(--warn-soft)}
+.inline-input.estimado::placeholder{color:var(--muted);opacity:.9}
+.economia .val.pos{color:var(--sage)}

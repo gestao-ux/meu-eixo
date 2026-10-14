@@ -55,7 +55,7 @@ const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
   {id:'financeiro',t:'Financeiro',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
   {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
-  {id:'alimentacao',t:'Alimentação',ic:'M7 3v8a3 3 0 0 0 3 3v7M7 3v5M10 3v5M17 3c-2 2-2 6 0 8v10',soon:5},
+  {id:'alimentacao',t:'Alimentação',ic:'M7 3v8a3 3 0 0 0 3 3v7M7 3v5M10 3v5M17 3c-2 2-2 6 0 8v10'},
   {id:'cardapios',t:'Cardápios e marmitas',ic:'M4 9h16v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3zM8 9V6h8v3',soon:6},
   {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',soon:8},
   {id:'despensa',t:'Despensa e estoque',ic:'M4 4h16v6H4zM4 10h16v10H4zM10 14h4',soon:8},
@@ -190,12 +190,12 @@ async function entrar(session){
   try{
     await carregarEspacos();
     if(!S.espacos.some(e=>e.tipo==='pessoal')){ chk(await sb.rpc('garantir_espaco_pessoal')); await carregarEspacos(); }
-    const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{};
+    const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{}; carregarPerfilAlimentar().then(schedule);
     const salvo=ls.get('meuEixo.espaco'); const alvo=S.espacos.find(e=>e.id===salvo)||S.espacos[0];
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -219,8 +219,9 @@ function render(){
   if(S.fase==='auth'){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=vAuth(); setTimeout(()=>{ const i=v.querySelector('input'); i&&i.focus(); },30); return; }
   renderNav();
   const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
-  $('#monthNav').hidden = S.view==='config';
-  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig};
+  $('#monthNav').hidden = S.view==='config' || S.view==='alimentacao';
+  document.querySelector('.fab').hidden = S.view==='alimentacao';
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao};
   v.innerHTML = (views[S.view]||vRoadmap)();
   ls.set('meuEixo.view',S.view);
   if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
@@ -825,6 +826,244 @@ const acoes = {
     async f=>{ if(f.elements.x.value.trim()!==espAtual()?.nome) return 'O nome digitado não confere.'; chk(await sb.from('espacos').delete().eq('id',S.esp)); await carregarEspacos(); fecharModal(); await abrirEspaco(S.espacos[0].id); toast('Espaço excluído.'); })
 };
 
+/* ---------- alimentação: questionário e perfil ---------- */
+const N = () => window.MeuEixoNutri;
+const ALIMENTOS = [
+  {g:'Proteínas', i:['Frango (peito)','Frango (coxa e sobrecoxa)','Ovo','Carne moída','Patinho / acém','Peixe (tilápia, merluza)','Sardinha em lata','Atum em lata','Carne de porco','Fígado','Linguiça','Queijo branco / ricota']},
+  {g:'Carboidratos', i:['Arroz branco','Arroz integral','Macarrão','Batata','Batata-doce','Mandioca','Inhame','Cuscuz de milho','Pão francês','Pão integral','Aveia','Tapioca']},
+  {g:'Feijões e grãos', i:['Feijão carioca','Feijão preto','Lentilha','Grão-de-bico','Ervilha']},
+  {g:'Legumes', i:['Cenoura','Abobrinha','Abóbora','Chuchu','Beterraba','Vagem','Brócolis','Couve-flor','Berinjela','Quiabo','Pimentão','Milho']},
+  {g:'Verduras e saladas', i:['Alface','Couve','Repolho','Rúcula','Espinafre','Tomate','Pepino','Cebola']},
+  {g:'Frutas', i:['Banana','Maçã','Laranja','Mamão','Melancia','Manga','Abacaxi','Goiaba','Uva','Abacate']},
+  {g:'Leite e derivados', i:['Leite','Iogurte natural','Queijo muçarela','Requeijão']}
+];
+const PASSOS = ['Você','Rotina','Objetivo','Saúde','Refeições','Preferências','Cozinha','Orçamento'];
+const CONDICOES = [['nenhuma','Nenhuma'],['hipertensao','Pressão alta'],['diabetes','Diabetes'],['pre_diabetes','Pré-diabetes ou resistência à insulina'],['colesterol','Colesterol ou triglicerídeos altos'],['gastrite','Gastrite ou refluxo'],['intestino','Intestino preso ou sensível'],['anemia','Anemia'],['tireoide','Hipotireoidismo ou hipertireoidismo'],['renal','Doença renal'],['gestante','Gestante'],['amamentando','Amamentando']];
+const ALERGIAS = [['lactose','Intolerância à lactose'],['gluten','Glúten / doença celíaca'],['amendoim','Amendoim e castanhas'],['frutos_mar','Peixes e frutos do mar'],['ovo','Ovo'],['soja','Soja']];
+const ESTILOS = [['tudo','Como de tudo'],['sem_vermelha','Sem carne vermelha'],['sem_porco','Sem carne de porco'],['vegetariano','Vegetariana (com ovos e leite)'],['vegano','Vegana']];
+const EQUIP = [['fogao','Fogão'],['forno','Forno'],['microondas','Micro-ondas'],['airfryer','Air fryer'],['pressao','Panela de pressão'],['liquidificador','Liquidificador'],['processador','Processador / mixer']];
+const DIAS = [['dom','Domingo'],['seg','Segunda'],['ter','Terça'],['qua','Quarta'],['qui','Quinta'],['sex','Sexta'],['sab','Sábado']];
+
+const RASCUNHO='meuEixo.quiz';
+function perfilVazio(){ return {sexo:'feminino',atividade:'leve',objetivo:'emagrecer',ritmo:'suave',condicoes:['nenhuma'],alergias:[],estilo:'tudo',refeicoes:['cafe','almoco','lanche_tarde','jantar'],horarios:{},gosta:[],naoGosta:[],equipamentos:['fogao','microondas','pressao'],diasPreparo:['dom'],pessoas:1,marmitaLocal:'trabalho',microondasTrabalho:'sim',habilidade:'intermediaria',tempoPreparo:'2h',freezer:'medio'}; }
+async function carregarPerfilAlimentar(){
+  try{ const d=chk(await sb.from('perfil_alimentar').select('dados,atualizado_em').eq('usuario_id',S.user.id).maybeSingle()); S.perfilAl=d?{...d.dados,_atualizado:d.atualizado_em}:null; }
+  catch(e){ console.error(e); S.perfilAl=null; S.perfilAlErro=true; }
+  try{ S.pesagens=chk(await sb.from('pesagens').select('data,peso,cintura').eq('usuario_id',S.user.id).order('data')) || []; }catch(_){ S.pesagens=[]; }
+}
+
+function chips(nome, lista, sel, multi=true){
+  sel = Array.isArray(sel)?sel:[sel];
+  return `<div class="chips" data-nome="${nome}" data-multi="${multi?1:0}">${lista.map(([v,t])=>`<button type="button" class="chip" data-act="chip" data-v="${v}" aria-pressed="${sel.includes(v)}">${t}</button>`).join('')}</div>`;
+}
+function opcoes(nome, lista, sel){
+  return `<div class="opcoes" data-nome="${nome}">${lista.map(([v,t,d])=>`<button type="button" class="opcao" data-act="chip" data-v="${v}" aria-pressed="${sel===v}"><b>${t}</b>${d?`<span>${d}</span>`:''}</button>`).join('')}</div>`;
+}
+
+function passoQuiz(i,p){
+  const at=N().ATIVIDADE, ob=N().OBJETIVOS, R=N().REFEICOES;
+  if(i===0) return `<h3>Vamos começar por você</h3><p class="lead">Estes dados servem para calcular seu IMC e quanta energia seu corpo gasta por dia. Ficam guardados só na sua conta; ninguém do espaço compartilhado vê.</p>
+    <div class="field"><span class="lbl">Sexo biológico (usado na fórmula de gasto de energia)</span>${opcoes('sexo',[['feminino','Feminino'],['masculino','Masculino']],p.sexo)}</div>
+    <div class="form-grid">
+      <div class="field"><label for="qNasc">Data de nascimento</label><input id="qNasc" name="nascimento" type="date" required value="${p.nascimento||''}"></div>
+      <div class="field"><label for="qAlt">Altura (cm)</label><input id="qAlt" name="altura" inputmode="numeric" required placeholder="Ex.: 165" value="${p.altura||''}"></div>
+      <div class="field"><label for="qPeso">Peso atual (kg)</label><input id="qPeso" name="peso" inputmode="decimal" required placeholder="Ex.: 68,5" value="${p.peso?String(p.peso).replace('.',','):''}"></div>
+      <div class="field"><label for="qCint">Cintura (cm, opcional)</label><input id="qCint" name="cintura" inputmode="decimal" placeholder="Medida na altura do umbigo" value="${p.cintura?String(p.cintura).replace('.',','):''}"></div>
+    </div>`;
+  if(i===1) return `<h3>Como é a sua rotina</h3><p class="lead">O nível de atividade muda bastante a quantidade de energia de que você precisa.</p>
+    <div class="field"><span class="lbl">Nível de atividade</span>${opcoes('atividade',Object.entries(at).map(([k,v])=>[k,v.t,v.d]),p.atividade)}</div>
+    <div class="form-grid">
+      <div class="field"><label for="qAcorda">Acordo por volta de</label><input id="qAcorda" name="acorda" type="time" value="${p.acorda||'06:30'}"></div>
+      <div class="field"><label for="qDorme">Durmo por volta de</label><input id="qDorme" name="dorme" type="time" value="${p.dorme||'22:30'}"></div>
+      <div class="field"><label for="qTrabI">Começo a trabalhar</label><input id="qTrabI" name="trabalhoInicio" type="time" value="${p.trabalhoInicio||'08:00'}"></div>
+      <div class="field"><label for="qTrabF">Termino de trabalhar</label><input id="qTrabF" name="trabalhoFim" type="time" value="${p.trabalhoFim||'18:00'}"></div>
+      <div class="field full"><label for="qExerc">Atividade física (opcional)</label><input id="qExerc" name="exercicio" maxlength="120" placeholder="Ex.: academia 3x por semana, à noite" value="${esc(p.exercicio)}"></div>
+    </div>`;
+  if(i===2) return `<h3>O que você quer alcançar</h3><p class="lead">Escolha o objetivo principal. O plano vai equilibrar saúde, praticidade e custo.</p>
+    <div class="field">${opcoes('objetivo',Object.entries(ob).map(([k,v])=>[k,v.t]),p.objetivo)}</div>
+    <div class="field" data-quiz-show="emagrecer" ${p.objetivo!=='emagrecer'?'hidden':''}><span class="lbl">Ritmo</span>${opcoes('ritmo',[['suave','Suave','Redução de cerca de 15% da energia. Mais fácil de manter.'],['moderado','Moderado','Redução de cerca de 20%. Resultado mais rápido, exige mais disciplina.']],p.ritmo)}</div>
+    <div class="field"><label for="qMeta">Peso que gostaria de alcançar (kg, opcional)</label><input id="qMeta" name="pesoMeta" inputmode="decimal" value="${p.pesoMeta?String(p.pesoMeta).replace('.',','):''}"></div>`;
+  if(i===3) return `<h3>Saúde e restrições</h3><p class="lead">Ajuda a evitar alimentos que não combinam com você. O Meu Eixo não faz diagnóstico: com qualquer condição de saúde, confirme o plano com seu médico ou nutricionista.</p>
+    <div class="field"><span class="lbl">Condições de saúde</span>${chips('condicoes',CONDICOES,p.condicoes)}</div>
+    <div class="field"><span class="lbl">Alergias e intolerâncias</span>${chips('alergias',ALERGIAS,p.alergias)}</div>
+    <div class="field"><label for="qOutras">Outras restrições ou observações</label><input id="qOutras" name="outrasRestricoes" maxlength="200" value="${esc(p.outrasRestricoes)}" placeholder="Ex.: não posso pimenta; uso medicamento X em jejum"></div>
+    <div class="field"><span class="lbl">Estilo de alimentação</span>${opcoes('estilo',ESTILOS,p.estilo)}</div>
+    <div class="field"><label for="qAgua">Quanta água você bebe hoje, por dia?</label><select id="qAgua" name="aguaAtual">${opts([['','Selecione'],['menos1','Menos de 1 litro'],['1a2','De 1 a 2 litros'],['mais2','Mais de 2 litros']],p.aguaAtual)}</select></div>`;
+  if(i===4) return `<h3>Suas refeições</h3><p class="lead">Marque as refeições que você quer fazer e o horário aproximado.</p>
+    <div class="refs">${Object.entries(R).map(([k,v])=>`<div class="ref-linha"><label class="check"><input type="checkbox" name="ref_${k}" ${p.refeicoes.includes(k)?'checked':''}> ${v.t}</label><input type="time" name="hora_${k}" aria-label="Horário: ${v.t}" value="${(p.horarios||{})[k]||{cafe:'07:00',lanche_manha:'10:00',almoco:'12:00',lanche_tarde:'15:30',jantar:'19:30',ceia:'21:30'}[k]}"></div>`).join('')}</div>
+    <div class="field"><span class="lbl">Onde você almoça nos dias de trabalho</span>${opcoes('marmitaLocal',[['trabalho','Levo marmita para o trabalho'],['casa','Almoço em casa'],['fora','Como fora / compro marmita']],p.marmitaLocal)}</div>
+    <div class="field"><span class="lbl">Tem micro-ondas onde almoça?</span>${opcoes('microondasTrabalho',[['sim','Sim'],['nao','Não']],p.microondasTrabalho)}</div>`;
+  if(i===5) return `<h3>Do que você gosta</h3><p class="lead">Toque uma vez para <b class="gosta-t">Gosto</b>, duas para <b class="naogosta-t">Não como</b> e três para voltar ao neutro. O cardápio usa só o que você aceita.</p>
+    ${ALIMENTOS.map(g=>`<div class="field"><span class="lbl">${g.g}</span><div class="chips">${g.i.map(a=>{ const st=p.gosta.includes(a)?'gosta':p.naoGosta.includes(a)?'nao':''; return `<button type="button" class="chip tri ${st}" data-act="tri" data-v="${esc(a)}">${esc(a)}</button>`; }).join('')}</div></div>`).join('')}
+    <div class="field"><label for="qOutrosG">Outros alimentos que você adora</label><input id="qOutrosG" name="outrosGosta" maxlength="200" value="${esc(p.outrosGosta)}"></div>`;
+  if(i===6) return `<h3>Sua cozinha</h3><p class="lead">Assim o plano de marmitas cabe no seu tempo e no seu espaço.</p>
+    <div class="field"><span class="lbl">Como você se sente na cozinha</span>${opcoes('habilidade',[['iniciante','Iniciante','Prefiro receitas bem simples.'],['intermediaria','Intermediária','Faço o básico do dia a dia.'],['avancada','Avançada','Gosto de variar e testar receitas.']],p.habilidade)}</div>
+    <div class="field"><span class="lbl">Tempo para cozinhar em um dia de preparo</span>${opcoes('tempoPreparo',[['1h','Até 1 hora'],['2h','Até 2 horas'],['3h','Até 3 horas'],['mais','Mais de 3 horas']],p.tempoPreparo)}</div>
+    <div class="field"><span class="lbl">Em quais dias pode preparar as marmitas</span>${chips('diasPreparo',DIAS,p.diasPreparo)}</div>
+    <div class="field"><span class="lbl">Equipamentos que você tem</span>${chips('equipamentos',EQUIP,p.equipamentos)}</div>
+    <div class="field"><span class="lbl">Espaço no freezer</span>${opcoes('freezer',[['nenhum','Não tenho freezer'],['pequeno','Pequeno (até 5 marmitas)'],['medio','Médio (6 a 10)'],['grande','Grande (mais de 10)']],p.freezer)}</div>
+    <div class="field"><label for="qPotes">Quantos potes de marmita você tem</label><input id="qPotes" name="potes" type="number" min="0" max="60" inputmode="numeric" value="${p.potes??''}"></div>`;
+  return `<h3>Orçamento</h3><p class="lead">Com estes números, o Meu Eixo calcula quanto você pode economizar preparando as próprias refeições.</p>
+    <div class="form-grid">
+      <div class="field"><label for="qOrc">Quanto quer gastar com alimentação por mês (R$)</label><input id="qOrc" name="orcamento" inputmode="decimal" value="${p.orcamento?fmtInput(p.orcamento):''}" placeholder="Ex.: 600,00"></div>
+      <div class="field"><label for="qPess">Quantas pessoas comem dessas compras</label><input id="qPess" name="pessoas" type="number" min="1" max="12" inputmode="numeric" value="${p.pessoas||1}"></div>
+      <div class="field"><label for="qMarmP">Quanto paga hoje numa marmita pronta (R$)</label><input id="qMarmP" name="precoMarmita" inputmode="decimal" value="${p.precoMarmita?fmtInput(p.precoMarmita):''}" placeholder="Ex.: 22,00"></div>
+      <div class="field"><label for="qMarmQ">Quantas marmitas prontas compra por semana</label><input id="qMarmQ" name="marmitasSemana" type="number" min="0" max="21" inputmode="numeric" value="${p.marmitasSemana??''}"></div>
+    </div>`;
+}
+
+function vQuiz(){
+  const q=S.quiz, i=q.passo, p=q.dados;
+  return `<div class="quiz">
+    <div class="quiz-topo"><span class="eyebrow">Perfil alimentar · ${i+1} de ${PASSOS.length}</span>
+      <div class="quiz-passos">${PASSOS.map((t,k)=>`<button type="button" class="qp ${k<i?'feito':''} ${k===i?'atual':''}" data-act="quizIr" data-i="${k}" ${k>q.max?'disabled':''} aria-label="${t}"><span>${t}</span></button>`).join('')}</div></div>
+    <form data-form="quiz" class="quiz-corpo" novalidate>${passoQuiz(i,p)}
+      <p class="err" id="quizErr"></p>
+      <div class="quiz-nav">${i>0?`<button type="button" class="btn" data-act="quizVoltar">Voltar</button>`:`<button type="button" class="btn ghost" data-act="quizCancelar">${S.perfilAl?'Cancelar':'Depois'}</button>`}
+        <button type="submit" class="btn primary">${i===PASSOS.length-1?'Ver meu plano':'Continuar'}</button></div>
+    </form></div>`;
+}
+
+function lerPasso(form){
+  const p=S.quiz.dados, E=form.elements, num=v=>{ const n=parseValor(v); return isNaN(n)?null:n; };
+  form.querySelectorAll('.chips[data-nome], .opcoes[data-nome]').forEach(g=>{
+    const sel=[...g.querySelectorAll('[aria-pressed="true"]')].map(b=>b.dataset.v);
+    p[g.dataset.nome] = g.classList.contains('opcoes') ? (sel[0]||p[g.dataset.nome]) : sel;
+  });
+  ['nascimento','acorda','dorme','trabalhoInicio','trabalhoFim','exercicio','outrasRestricoes','aguaAtual','outrosGosta'].forEach(k=>{ if(E[k]) p[k]=E[k].value.trim(); });
+  ['altura','peso','cintura','pesoMeta','orcamento','precoMarmita'].forEach(k=>{ if(E[k]) p[k]=num(E[k].value); });
+  ['potes','pessoas','marmitasSemana'].forEach(k=>{ if(E[k]) p[k]=E[k].value===''?null:parseInt(E[k].value); });
+  if(E.ref_cafe){ p.refeicoes=Object.keys(N().REFEICOES).filter(k=>E['ref_'+k].checked); p.horarios={}; Object.keys(N().REFEICOES).forEach(k=>p.horarios[k]=E['hora_'+k].value); }
+  if(form.querySelector('[data-act="tri"]')){ p.gosta=[...form.querySelectorAll('.chip.tri.gosta')].map(b=>b.dataset.v); p.naoGosta=[...form.querySelectorAll('.chip.tri.nao')].map(b=>b.dataset.v); }
+  try{ localStorage.setItem(RASCUNHO,JSON.stringify(S.quiz)); }catch(_){}
+}
+function validarPasso(i,p){
+  if(i===0){
+    if(!p.nascimento) return 'Informe a data de nascimento.';
+    const a=N().idade(p.nascimento,hoje()); if(a===null||a<10||a>110) return 'Confira a data de nascimento.';
+    if(!(p.altura>=120&&p.altura<=230)) return 'Informe a altura em centímetros, por exemplo 165.';
+    if(!(p.peso>=30&&p.peso<=300)) return 'Informe o peso em quilos, por exemplo 68,5.';
+    if(p.cintura!==null && p.cintura!==undefined && !(p.cintura>=40&&p.cintura<=200)) return 'Confira a medida da cintura, em centímetros.';
+  }
+  if(i===3 && (p.condicoes||[]).length>1 && p.condicoes.includes('nenhuma')) p.condicoes=p.condicoes.filter(c=>c!=='nenhuma');
+  if(i===4 && !p.refeicoes.length) return 'Escolha pelo menos uma refeição.';
+  if(i===4 && !p.refeicoes.includes('almoco') && p.marmitaLocal!=='fora') return 'Inclua o almoço para montarmos as marmitas, ou escolha “Como fora”.';
+  return '';
+}
+async function salvarPerfilAl(){
+  const p={...S.quiz.dados}; delete p._atualizado;
+  chk(await sb.from('perfil_alimentar').upsert({usuario_id:S.user.id,dados:p,atualizado_em:new Date().toISOString()},{onConflict:'usuario_id'}));
+  const ult=(S.pesagens||[]).slice(-1)[0];
+  if(!ult || ult.data!==hoje() || +ult.peso!==+p.peso){
+    if(ult && ult.data===hoje()) chk(await sb.from('pesagens').delete().eq('usuario_id',S.user.id).eq('data',hoje()));
+    chk(await sb.from('pesagens').insert({usuario_id:S.user.id,data:hoje(),peso:p.peso,cintura:p.cintura||null}));
+  }
+  try{ localStorage.removeItem(RASCUNHO); }catch(_){}
+  S.quiz=null; await carregarPerfilAlimentar();
+}
+
+function vAlimentacao(){
+  if(S.quiz) return vQuiz();
+  if(S.perfilAl===undefined) return `<div class="empty"><strong>Carregando seu perfil alimentar…</strong></div>`;
+  if(S.perfilAlErro) return `<div class="empty"><strong>O módulo de alimentação precisa de uma atualização no banco</strong>No Supabase, execute o arquivo <b>003_perfil_alimentar.sql</b> no SQL Editor e recarregue a página.</div>`;
+  const p=S.perfilAl;
+  if(!p) return `<div class="intro-al">
+    <span class="eyebrow">Alimentação</span><h2>Vamos montar seu perfil alimentar</h2>
+    <p>São 8 etapas rápidas, cerca de 5 minutos. Com elas, o Meu Eixo calcula seu IMC, quanta energia você gasta por dia, quanto de proteína e água precisa, e como montar marmitas equilibradas dentro do seu orçamento.</p>
+    <ul><li>Seus dados de saúde ficam só na sua conta.</li><li>Você escolhe os alimentos; o sistema só sugere.</li><li>As metas são estimativas e não substituem nutricionista ou médico.</li></ul>
+    <div class="actions"><button class="btn primary" data-act="quizIniciar">Começar questionário</button></div></div>`;
+  const c=N().calcular(p,hoje()); if(!c) return `<div class="empty"><strong>Faltam dados no perfil</strong><button class="btn primary" data-act="quizIniciar" style="margin-top:12px">Completar questionário</button></div>`;
+  const fx={baixo:'warn',adequado:'ok',acima:'warn',obes1:'danger',obes2:'danger',obes3:'danger'}[c.faixa.k];
+  const escala = Math.min(100,Math.max(0,(c.imc-15)/(40-15)*100));
+  const ajusteTxt = c.ajuste<0?`${Math.round(-c.ajuste*100)}% abaixo do gasto, para emagrecer`:c.ajuste>0?`${Math.round(c.ajuste*100)}% acima do gasto, para ganhar massa`:'igual ao gasto, para manter';
+  const economia = (p.precoMarmita>0 && p.marmitasSemana>0) ? r2(p.precoMarmita*p.marmitasSemana*4.33) : null;
+  const pes=S.pesagens||[];
+  const evol = pes.length>1 ? r1(pes[pes.length-1].peso - pes[0].peso) : null;
+  return `
+  <section class="perfil-topo">
+    <div><span class="eyebrow">Seu perfil alimentar</span><h2>${esc(N().OBJETIVOS[p.objetivo]?.t||'')}</h2><p class="muted small">Atualizado em ${dataBR((p._atualizado||'').slice(0,10))} · ${c.anos} anos · ${p.altura} cm · ${String(p.peso).replace('.',',')} kg</p></div>
+    <div class="actions"><button class="btn" data-act="novaPesagem">Registrar peso</button><button class="btn" data-act="quizEditar">Editar respostas</button></div>
+  </section>
+  ${c.avisos.length?`<div class="alerts">${c.avisos.map(a=>`<div class="alert warn"><span class="dot"></span><div><p>${a}</p></div></div>`).join('')}</div>`:''}
+  <div class="grid2">
+    <section class="panel imc">
+      <h3>IMC</h3>
+      <div class="imc-val"><span class="num">${String(c.imc).replace('.',',')}</span><span class="pill ${fx}">${c.faixa.t}</span></div>
+      <div class="imc-escala" aria-hidden="true"><i style="left:${escala}%"></i></div>
+      <div class="imc-legenda small muted"><span>15</span><span>18,5</span><span>25</span><span>30</span><span>40</span></div>
+      <p class="small" style="margin:12px 0 0">Para a sua altura, a faixa de peso de referência vai de <b>${String(c.pesoRef[0]).replace('.',',')} kg</b> a <b>${String(c.pesoRef[1]).replace('.',',')} kg</b>.${p.pesoMeta?` Sua meta: ${String(p.pesoMeta).replace('.',',')} kg.`:''}</p>
+      ${c.cintura?`<p class="small" style="margin:8px 0 0">Cintura de ${String(p.cintura).replace('.',',')} cm: ${c.cintura.t}.</p>`:''}
+      <p class="small muted" style="margin:8px 0 0">O IMC não diferencia músculo de gordura. É um ponto de partida, não um diagnóstico.</p>
+    </section>
+    <section class="panel">
+      <h3>Energia por dia</h3>
+      <div class="list">
+        ${linha('Gasto em repouso',c.tmb.toLocaleString('pt-BR')+' kcal')}
+        ${linha('Gasto total com a sua rotina',c.get.toLocaleString('pt-BR')+' kcal')}
+        <div class="row" style="grid-template-columns:1fr auto"><span><b>Meta diária</b><div class="small muted">${ajusteTxt}</div></span><b class="num big-meta">${c.meta.toLocaleString('pt-BR')} kcal</b></div>
+      </div>
+    </section>
+  </div>
+  <section class="kpis macros">
+    <div class="kpi"><span class="lbl">Proteína</span><span class="val">${c.prot===null?'—':c.prot+' g'}</span><span class="sub">${c.prot===null?'definir com profissional':`por dia (${String(c.gkg).replace('.',',')} g por kg)`}</span></div>
+    <div class="kpi"><span class="lbl">Carboidratos</span><span class="val">${c.carb===null?'—':c.carb+' g'}</span><span class="sub">por dia, com ${c.fibra} g de fibras</span></div>
+    <div class="kpi"><span class="lbl">Gorduras</span><span class="val">${c.gord} g</span><span class="sub">por dia, de boa qualidade</span></div>
+    <div class="kpi"><span class="lbl">Água</span><span class="val">${String(c.agua).replace('.',',')} L</span><span class="sub">por dia, cerca de ${Math.round(c.agua*1000/250)} copos</span></div>
+  </section>
+  <div class="grid2">
+    <section class="panel"><h3>Como dividir no dia</h3>
+      <div class="list">${c.porRefeicao.map(r=>linha(`${r.t}${p.horarios?.[r.k]?` <span class="small muted">· ${p.horarios[r.k]}</span>`:''}`,r.kcal+' kcal')).join('')}</div></section>
+    <section class="panel"><h3>Sua marmita de almoço</h3>
+      ${c.marmita?`<div class="prato" aria-hidden="true"><div class="prato-v">Vegetais<br>½</div><div class="prato-p">Proteína<br>¼</div><div class="prato-c">Carboi&shy;drato<br>¼</div></div>
+      <div class="list">${linha('Proteína (frango, carne, ovo, peixe)','cerca de '+c.marmita.proteinaG+' g')}${linha('Arroz, macarrão ou tubérculo','cerca de '+c.marmita.carboG+' g')}${linha('Feijão ou lentilha','1 concha (cerca de '+c.marmita.feijaoG+' g)')}${linha('Legumes e salada','pelo menos '+c.marmita.vegetaisG+' g')}</div>
+      <p class="small muted" style="margin:10px 0 0">Quantidades de alimento pronto, para cerca de ${c.marmitaKcal} kcal. O cardápio da semana vai ajustar conforme os alimentos escolhidos.</p>`:'<p class="muted small">Você não incluiu o almoço nas refeições.</p>'}
+    </section>
+  </div>
+  <div class="grid2">
+    <section class="panel"><h3>Orçamento e economia</h3><div class="list">
+      ${linha('Orçamento mensal de alimentação',p.orcamento?money(p.orcamento):'<span class="small muted">não informado</span>')}
+      ${linha('Gasto atual com marmitas prontas',economia?money(economia)+'/mês':'<span class="small muted">não informado</span>')}
+      ${linha('Pessoas nas compras',p.pessoas||1)}</div>
+      <p class="note" style="margin:12px 0 0">${economia?`Hoje você gasta cerca de ${money(economia)} por mês com marmitas prontas. Quando o cardápio estiver pronto, o Meu Eixo mostra o custo de preparar em casa, com preços de Cuiabá, e a economia real.`:'Informe o preço e a quantidade de marmitas prontas para calcularmos a economia.'}</p></section>
+    <section class="panel"><h3>Evolução do peso</h3>
+      ${pes.length?`<div class="list">${pes.slice(-5).reverse().map(x=>linha(dataBR(x.data),String(x.peso).replace('.',',')+' kg'+(x.cintura?` · cintura ${String(x.cintura).replace('.',',')} cm`:''))).join('')}</div>
+      ${evol!==null?`<p class="small" style="margin:10px 0 0">Desde a primeira pesagem: <b>${evol>0?'+':''}${String(evol).replace('.',',')} kg</b>.</p>`:''}`:'<p class="small muted">Registre seu peso de tempos em tempos para acompanhar a evolução.</p>'}
+    </section>
+  </div>
+  <section class="panel"><h3>Suas preferências</h3>
+    <p class="small" style="margin:0 0 8px"><b>Gosta:</b> ${p.gosta?.length?p.gosta.map(esc).join(', '):'nenhum alimento marcado'}${p.outrosGosta?', '+esc(p.outrosGosta):''}</p>
+    <p class="small" style="margin:0 0 8px"><b>Não come:</b> ${p.naoGosta?.length?p.naoGosta.map(esc).join(', '):'nada marcado'}</p>
+    <p class="small" style="margin:0"><b>Restrições:</b> ${[...(p.alergias||[]).map(a=>(ALERGIAS.find(x=>x[0]===a)||[,a])[1]), ESTILOS.find(x=>x[0]===p.estilo)?.[1], p.outrasRestricoes].filter(Boolean).map(esc).join(' · ')||'nenhuma'}</p>
+  </section>
+  <div class="roadmap"><span class="eyebrow">Próximo passo · Etapa 6</span><h2>Cardápio semanal e plano de marmitas</h2><p style="margin:0">Com este perfil, o próximo módulo monta o cardápio da semana com os alimentos que você aceita, calcula as porções, a lista de compras e o plano de preparo das marmitas.</p></div>`;
+}
+
+const acoesAl = {
+  quizIniciar: () => { let r=null; try{ r=JSON.parse(localStorage.getItem(RASCUNHO)||'null'); }catch(_){}
+    S.quiz = r && r.dados ? r : {passo:0,max:0,dados:{...perfilVazio(),...(S.perfilAl||{})}}; render(); window.scrollTo(0,0); },
+  quizEditar: () => { S.quiz={passo:0,max:PASSOS.length-1,dados:{...perfilVazio(),...S.perfilAl}}; render(); window.scrollTo(0,0); },
+  quizCancelar: () => { S.quiz=null; try{ localStorage.removeItem(RASCUNHO); }catch(_){} render(); },
+  quizVoltar: el => { lerPasso(el.closest('form')); S.quiz.passo--; render(); window.scrollTo(0,0); },
+  quizIr: el => { lerPasso($('form[data-form="quiz"]')); S.quiz.passo=+el.dataset.i; render(); window.scrollTo(0,0); },
+  chip: el => { const g=el.parentElement; const multi=g.dataset.multi==='1';
+    if(multi){ const on=el.getAttribute('aria-pressed')!=='true'; el.setAttribute('aria-pressed',String(on));
+      if(g.dataset.nome==='condicoes'){ if(el.dataset.v==='nenhuma'&&on) g.querySelectorAll('[data-v]:not([data-v="nenhuma"])').forEach(b=>b.setAttribute('aria-pressed','false')); else if(on) g.querySelector('[data-v="nenhuma"]')?.setAttribute('aria-pressed','false'); } }
+    else { g.querySelectorAll('[data-v]').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); }
+    if(g.dataset.nome==='objetivo') document.querySelectorAll('[data-quiz-show]').forEach(x=>x.hidden=x.dataset.quizShow!==el.dataset.v); },
+  tri: el => { if(el.classList.contains('gosta')){ el.classList.remove('gosta'); el.classList.add('nao'); } else if(el.classList.contains('nao')) el.classList.remove('nao'); else el.classList.add('gosta'); },
+  novaPesagem: () => abrirModal(`<form data-form="quick">${head('Registrar peso')}<div class="form-grid"><div class="field"><label for="pP">Peso (kg)</label><input id="pP" name="peso" inputmode="decimal" required value="${String(S.perfilAl?.peso||'').replace('.',',')}"></div><div class="field"><label for="pC">Cintura (cm, opcional)</label><input id="pC" name="cintura" inputmode="decimal" value="${S.perfilAl?.cintura?String(S.perfilAl.cintura).replace('.',','):''}"></div><div class="field"><label for="pD">Data</label><input id="pD" name="data" type="date" value="${hoje()}" required></div></div>${rodape('Salvar')}</form>`,
+    async f=>{ const E=f.elements, peso=parseValor(E.peso.value), cint=E.cintura.value.trim()?parseValor(E.cintura.value):null;
+      if(!(peso>=30&&peso<=300)) return 'Informe o peso em quilos, por exemplo 68,5.'; if(cint!==null&&!(cint>=40&&cint<=200)) return 'Confira a medida da cintura.';
+      chk(await sb.from('pesagens').delete().eq('usuario_id',S.user.id).eq('data',E.data.value));
+      chk(await sb.from('pesagens').insert({usuario_id:S.user.id,data:E.data.value,peso:r2(peso),cintura:cint}));
+      const ultima = !(S.pesagens||[]).some(x=>x.data>E.data.value);
+      if(ultima){ const dados={...S.perfilAl,peso:r2(peso),...(cint?{cintura:cint}:{})}; delete dados._atualizado; chk(await sb.from('perfil_alimentar').update({dados,atualizado_em:new Date().toISOString()}).eq('usuario_id',S.user.id)); }
+      await carregarPerfilAlimentar(); render(); toast('Peso registrado. As metas foram recalculadas.'); })
+};
+const r1 = v => Math.round(v*10)/10;
+
+Object.assign(acoes, acoesAl);
+
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{
   const el=e.target.closest('[data-act]'); if(!el) return;
@@ -849,6 +1088,9 @@ document.addEventListener('submit', async e=>{
     }catch(x){ const el=$('#authErr'); if(el) el.textContent=erroAmigavel(x); }
     const b2=f.querySelector('[type=submit]'); if(b2) b2.disabled=false; return;
   }
+  if(tipo==='quiz'){ lerPasso(f); const erro=validarPasso(S.quiz.passo,S.quiz.dados); if(erro){ $('#quizErr').textContent=erro; return; }
+    if(S.quiz.passo<PASSOS.length-1){ S.quiz.passo++; S.quiz.max=Math.max(S.quiz.max,S.quiz.passo); render(); window.scrollTo(0,0); return; }
+    btn.disabled=true; try{ await salvarPerfilAl(); render(); window.scrollTo(0,0); toast('Perfil salvo. Veja suas metas.'); }catch(x){ $('#quizErr').textContent=erroAmigavel(x); btn.disabled=false; } return; }
   if(tipo==='saldo'){ const v=parseValor(f.elements.valor.value); if(isNaN(v)){ toast('Informe o saldo, por exemplo 1250,00.'); return; }
     try{ await salvarCfg({saldoInicial:r2(v),dataSaldo:f.elements.data.value}); toast('Saldo inicial salvo.'); }catch(x){ dbErr(x); } return; }
   if(!modalSubmit) return;

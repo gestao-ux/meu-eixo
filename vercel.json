@@ -26,7 +26,7 @@
       ]
     },
     {
-      "source": "/(app.js|config.js|leitor.js|estilo.css)",
+      "source": "/(app.js|config.js|leitor.js|nutri.js|estilo.css)",
       "headers": [
         {
           "key": "Cache-Control",

@@ -169,6 +169,14 @@ begin
   end loop;
 end $$;
 
+-- Permissões das tabelas para usuários conectados (as regras acima filtram as linhas).
+-- Visitantes sem login (anon) não acessam nenhuma tabela.
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.perfis, public.espacos, public.membros, public.categorias,
+  public.recorrencias, public.receitas, public.despesas, public.orcamentos, public.configuracoes to authenticated;
+revoke all on public.perfis, public.espacos, public.membros, public.categorias,
+  public.recorrencias, public.receitas, public.despesas, public.orcamentos, public.configuracoes from anon;
+
 -- ---------------------------------------------------------------------
 -- 4. Funções usadas pelo site
 -- ---------------------------------------------------------------------

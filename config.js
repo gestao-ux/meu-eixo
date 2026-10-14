@@ -5,6 +5,6 @@
 // Essas duas informações são públicas por natureza: a proteção dos dados é feita
 // pelas regras de acesso (RLS) do banco. NUNCA coloque aqui a chave "service_role" / secret.
 window.MEU_EIXO_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: ""
+  SUPABASE_URL: "https://xwfnyrbbwkjboxaiwgbt.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_zC7HvNwuycNoF4BUJV_GJA_gbZv87hd"
 };

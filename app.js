@@ -42,7 +42,7 @@ const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPA
 
 const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
 const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
-const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido']);
+const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash']);
 function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
 function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
 const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
@@ -200,7 +200,7 @@ function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Ob
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
 const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
-const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11' };
+const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11', clip:'M20 11.5 12.2 19.3a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7.1', foto:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' };
 const logo = `<img src="icone.svg" width="56" height="56" alt="">`;
 
 function renderNav(){
@@ -264,16 +264,22 @@ function pillR(r){ const s=sitRec(r); return `<span class="pill ${s}">${SIT_R[s]
 const pillP = p => p ? `<span class="pill p${p}">Dia ${p}</span>` : '';
 
 function rowDesp(d,o={}){
-  const s=sitDesp(d), parc=(+d.parcelas||1)>1?` · parcela ${d.parcelaAtual}/${d.parcelas}`:''; const ops=[];
+  const s=sitDesp(d), grupo=(+d.parcelas||1)>1, ops=[];
+  const pix=d.pixCopiaCola||d.chavePix;
+  if(pix && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
   if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Paga</button>`);
+  if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   if(o.mover){ if(d.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="10">Dia 10</button>`); if(d.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="20">Dia 20</button>`); if(d.periodo) ops.push(`<button class="btn sm ghost" data-act="periodo" data-id="${d.id}" data-p="">Tirar do período</button>`); }
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}${parc}</span><span>vence ${dataCurta(d.vencimento)}</span>${pillD(d)}${o.mover?'':pillP(d.periodo)}${d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+  const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
+  const restante = grupo ? `<div class="small muted">faltam ${Math.max(0,(+d.parcelas)-(+d.parcelaAtual))} depois desta</div>` : '';
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}${restante}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];
   if(s!=='recebida'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
+  if(r.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(r.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   if(o.mover){ if(r.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="10">Dia 10</button>`); if(r.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="20">Dia 20</button>`); }
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
@@ -305,6 +311,7 @@ function vInicio(){
     </div></section>
   <div class="actions">
     <button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Adicionar despesa</button>
+    <button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button>
     <button class="btn" data-act="novo" data-tipo="receita">${icon(I.plus)}Registrar receita</button>
     <button class="btn" data-act="ir" data-v="planejamento">Planejar dias 10 e 20</button>
     <button class="btn" data-act="ir" data-v="relatorios">Consultar relatórios</button></div>
@@ -332,7 +339,7 @@ function vFinanceiro(){
   </div>
   <section>
     <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${!isD}" data-act="tab" data-v="receitas">Receitas (${R.length})</button></div>
-    <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}${isD?'Nova despesa':'Nova receita'}</button></div></div>
+    <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}${isD?'Nova despesa':'Nova receita'}</button></div></div>
     ${isD?`<div class="filters">
       <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit"><option value="">Todas</option>${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit===k?'selected':''}>${v}</option>`).join('')}</select></div>
       <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat"><option value="">Todas</option>${S.cats.map(c=>`<option value="${c.id}" ${f.cat===c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
@@ -451,7 +458,7 @@ function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
 
 /* ---------- modais ---------- */
 let modalSubmit=null;
-function abrirModal(html,onSubmit,afterMount){ $('#sheet').innerHTML=html; $('#modal').hidden=false; modalSubmit=onSubmit; afterMount&&afterMount($('#sheet')); setTimeout(()=>{ const f=$('#sheet').querySelector('input:not([type=hidden]):not([type=checkbox]),select,textarea'); f&&f.focus(); },30); }
+function abrirModal(html,onSubmit,afterMount){ anexo=null; $('#sheet').innerHTML=html; $('#modal').hidden=false; modalSubmit=onSubmit; afterMount&&afterMount($('#sheet')); setTimeout(()=>{ const f=$('#sheet').querySelector('input:not([type=hidden]):not([type=checkbox]),select,textarea'); f&&f.focus(); },30); }
 function fecharModal(){ $('#modal').hidden=true; $('#sheet').innerHTML=''; modalSubmit=null; }
 function toast(t){ const el=$('#toast'); el.textContent=t; el.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>el.hidden=true,3600); }
 const head = t => `<header><h2>${t}</h2><button type="button" class="icon-btn" data-act="fechar" aria-label="Fechar">${icon('M6 6l12 12M18 6 6 18')}</button></header>`;
@@ -462,73 +469,240 @@ function confirmar(titulo,texto,botoes){
   confirmar.cb=botoes.map(b=>b.fn);
 }
 
+/* ---------- comprovante anexado ao formulário ---------- */
+let anexo=null;
+const LEITOR = () => window.MeuEixoLeitor;
+function blocoAnexo(item,texto){
+  const tem=!!item?.comprovante;
+  return `<div class="anexo">
+    <input type="file" id="arqComp" accept="image/*,application/pdf" hidden>
+    <div class="anexo-linha">
+      <span class="anexo-ic">${icon(I.clip)}</span>
+      <div class="anexo-txt"><b id="anexoTitulo">${tem?'Comprovante anexado':'Comprovante'}</b><span id="anexoStatus">${tem?'Envie outro arquivo se quiser substituir.':(texto||'Envie a foto, o print ou o PDF. Eu leio o valor, a data e o destinatário para você conferir.')}</span></div>
+      <div class="anexo-ops">${tem?`<button type="button" class="btn sm ghost" data-act="verComp" data-path="${esc(item.comprovante)}">Ver</button>`:''}<button type="button" class="btn sm" data-act="escolherArquivo">${tem?'Substituir':'Anexar'}</button></div>
+    </div><div id="anexoAviso"></div></div>`;
+}
+function definirSeg(form,nome,v){ form.elements[nome].value=v; const seg=form.querySelector(nome==='modo'?'#segModo':'#segValor'); seg&&seg.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===v))); form.dispatchEvent(new Event('change',{bubbles:true})); }
+function marcar(el,valor){ if(!el||valor===undefined||valor===null||valor==='') return false; el.value=valor; el.classList.add('lido'); el.dispatchEvent(new Event('change',{bubbles:true})); return true; }
+async function processarAnexo(input){
+  const arq=input.files?.[0]; if(!arq) return;
+  const form=input.closest('form'), st=$('#anexoStatus'), aviso=$('#anexoAviso');
+  aviso.innerHTML='';
+  if(arq.size>10*1024*1024){ st.textContent='O arquivo passa de 10 MB. Envie um print ou uma foto menor.'; input.value=''; return; }
+  anexo={file:arq, hash:null};
+  $('#anexoTitulo').textContent=arq.name||'Comprovante';
+  st.textContent='Lendo o comprovante…';
+  try{ anexo.hash=await LEITOR().hash(arq); }catch(_){}
+  const idAtual=form.dataset.id||form.dataset.ref||'';
+  const dup=anexo.hash && [...S.desp.map(x=>({...x,_c:'despesas'})),...S.rec.map(x=>({...x,_c:'receitas'}))].find(x=>x.comprovanteHash===anexo.hash && x.id!==idAtual);
+  if(dup) aviso.innerHTML=`<div class="alert warn" style="margin-top:10px"><span class="dot"></span><div><p>Este comprovante já foi enviado em “${esc(dup.descricao)}” (${money(dup.valor??dup.valorRecebido??dup.valorPrevisto)}).</p><p class="hint">Se for a mesma operação, cancele e use o lançamento existente. Se for outra, pode continuar.</p><div class="actions" style="margin-top:6px"><button type="button" class="btn sm" data-act="editar" data-col="${dup._c}" data-id="${dup.id}">Abrir o lançamento existente</button></div></div></div>`;
+  let r=null;
+  try{ r=await LEITOR().ler(arq, p=>{ st.textContent=`Lendo o comprovante… ${p}%`; }); }
+  catch(e){ console.error(e); st.textContent='Não consegui ler este arquivo automaticamente. Ele será anexado mesmo assim; preencha os campos.'; return; }
+  if(!document.body.contains(form)) return;
+  const lidos=preencherComLeitura(form,r);
+  st.innerHTML = lidos.length ? `Li: <b>${lidos.map(esc).join(' · ')}</b>. Os campos em destaque vieram do comprovante; confira antes de salvar.` : 'Não encontrei valor nem data legíveis. O arquivo será anexado; preencha os campos.';
+  if(r.entrada && form.dataset.form==='despesa') aviso.insertAdjacentHTML('beforeend','<p class="note" style="margin:10px 0 0">Parece um Pix <b>recebido</b>. Se for uma entrada de dinheiro, cancele e registre como Receita.</p>');
+}
+function preencherComLeitura(form,r){
+  const E=form.elements, lidos=[], novo=!form.dataset.id;
+  const vazio = el => el && !String(el.value||'').trim();
+  if(r.valor) lidos.push(money(r.valor)); if(r.data) lidos.push(dataBR(r.data)); if(r.nome) lidos.push(r.nome); if(r.chave) lidos.push('chave Pix');
+  const tipo=form.dataset.form;
+  if(tipo==='despesa'){
+    if(r.valor){ if(E.modoValor && E.modoValor.value==='total') definirSeg(form,'modoValor','parcela'); marcar(E.valor,fmtInput(r.valor)); }
+    if(novo && r.nome && vazio(E.descricao)) marcar(E.descricao,r.nome);
+    marcar(E.situacao,'paga');
+    if(r.data){ marcar(E.dataPagamento,r.data); if(novo) marcar(E.vencimento,r.data); }
+    if(r.pix) marcar(E.formaPagamento,'Pix');
+    if(r.chave && vazio(E.chavePix)) marcar(E.chavePix,r.chave);
+  } else if(tipo==='receita'){
+    if(novo && r.nome && vazio(E.descricao)) marcar(E.descricao,r.nome);
+    if(r.valor){ if(vazio(E.valorPrevisto)) marcar(E.valorPrevisto,fmtInput(r.valor)); marcar(E.valorRecebido,fmtInput(r.valor)); }
+    marcar(E.situacao,'recebida');
+    if(r.data){ marcar(E.dataEfetiva,r.data); if(novo) marcar(E.dataPrevista,r.data); }
+  } else if(tipo==='quick'){
+    if(r.valor) marcar(E.v,fmtInput(r.valor)); if(r.data) marcar(E.d,r.data);
+    if(r.chave && E.chavePix && vazio(E.chavePix)) marcar(E.chavePix,r.chave);
+  }
+  return lidos;
+}
+async function enviarArquivo(){
+  if(!anexo?.file) return null;
+  const f=anexo.file; let ext=((f.name||'').split('.').pop()||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(!ext||ext.length>5) ext = f.type==='application/pdf'?'pdf':(f.type.split('/')[1]||'jpg');
+  const path=`${S.esp}/${hoje().slice(0,7)}/${uid()}.${ext}`;
+  chk(await sb.storage.from('comprovantes').upload(path,f,{contentType:f.type||undefined,upsert:false}));
+  return {comprovante:path, comprovanteHash:anexo.hash||null};
+}
+async function apagarArquivos(paths){ paths=paths.filter(Boolean); if(!paths.length) return; try{ await sb.storage.from('comprovantes').remove(paths); }catch(e){ console.error(e); } }
+
+/* ---------- formulário de despesa ---------- */
+const blocoPix = d => `<div class="grupo" data-show="pix">
+  <span class="grupo-t">Pix para pagar</span>
+  <div class="form-grid">
+    <div class="field"><label for="dChave">Chave Pix</label><input id="dChave" name="chavePix" maxlength="140" autocomplete="off" value="${esc(d.chavePix)}" placeholder="CPF, CNPJ, e-mail, celular ou chave aleatória"></div>
+    <div class="field"><label for="dCopia">Pix copia e cola (opcional)</label><input id="dCopia" name="pixCopiaCola" maxlength="600" autocomplete="off" value="${esc(d.pixCopiaCola)}" placeholder="Cole aqui o código, se a cobrança tiver um"></div>
+  </div>
+  <p class="small muted" style="margin:6px 0 0">Fica salvo no lançamento. Na lista, o botão “Copiar Pix” copia a chave para você colar no app do banco.</p>
+</div>`;
+
 function formDespesa(d){
-  const novo=!d; d=d||{situacao:'pendente',comportamento:'variavel',periodo:'',dataCompra:hoje(),vencimento:S.mes===hoje().slice(0,7)?hoje():S.mes+'-10'};
-  const g=(+d.parcelas||1)>1;
+  const novo=!d; d=d||{situacao:'pendente',comportamento:'variavel',periodo:'',formaPagamento:'Pix',vencimento:S.mes===hoje().slice(0,7)?hoje():S.mes+'-10'};
+  const grupo=(+d.parcelas||1)>1;
   return `<form data-form="despesa" data-id="${d.id||''}">${head(novo?'Nova despesa':'Editar despesa')}
   ${novo?`<div class="seg"><button type="button" aria-pressed="true">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button></div>`:''}
-  <div class="form-grid">
-    <div class="field full"><label for="dDesc">Descrição</label><input id="dDesc" name="descricao" required maxlength="120" value="${esc(d.descricao)}" placeholder="Ex.: Aluguel, Supermercado, Internet"></div>
-    <div class="field"><label for="dValor" id="dValorLbl">Valor${g?' da parcela':''} (R$)</label><input id="dValor" name="valor" inputmode="decimal" required value="${fmtInput(d.valor)}" placeholder="0,00"></div>
-    <div class="field"><label for="dCat">Categoria</label><select id="dCat" name="categoria" required><option value="">Selecione</option>${opts(S.cats.map(c=>[c.id,c.nome]),d.categoria)}</select></div>
-    <div class="field"><label for="dSub">Subcategoria</label><input id="dSub" name="subcategoria" maxlength="60" value="${esc(d.subcategoria)}" placeholder="Opcional"></div>
-    <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
-    <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['fixa','Fixa'],['variavel','Variável']],d.comportamento)}</select></div>
-    <div class="field"><label for="dPer">Pagar com o recebimento</label><select id="dPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
-    <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
-    <div class="field"><label for="dVenc">${novo?'Vencimento (1ª parcela)':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
-    <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['prevista','Prevista'],['pendente','Pendente'],['paga','Paga'],['cancelada','Cancelada']],d.situacao)}</select></div>
-    <div class="field" data-show="paga"><label for="dPag">Data do pagamento</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
-    ${novo?`<div class="field"><label for="dParc">Número de parcelas</label><input id="dParc" name="parcelas" type="number" min="1" max="72" value="1"></div>
-    <div class="field" data-show="parc"><label for="dModo">O valor informado é</label><select id="dModo" name="modoValor">${opts([['total','O total da compra'],['parcela','O valor de cada parcela']],'total')}</select></div>
-    <label class="check full" data-show="rec"><input type="checkbox" name="recorrente"> Repete todo mês (cria um modelo de conta fixa)</label>`
-    :(g?`<p class="note full">Parcela ${d.parcelaAtual} de ${d.parcelas} · compra total de ${money(d.valorTotal)}. A alteração vale só para esta parcela.</p>`:'')}
-    <div class="field full"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
-  </div>${rodape(novo?'Salvar despesa':'Salvar alterações')}</form>`;
+  ${blocoAnexo(d)}
+  <div class="grupo"><span class="grupo-t">O que é</span>
+    <div class="form-grid">
+      <div class="field full"><label for="dDesc">Descrição</label><input id="dDesc" name="descricao" required maxlength="120" value="${esc(d.descricao)}" placeholder="Ex.: Aluguel, Ar-condicionado, Supermercado"></div>
+      <div class="field"><label for="dCat">Categoria</label><select id="dCat" name="categoria" required><option value="">Selecione</option>${opts(S.cats.map(c=>[c.id,c.nome]),d.categoria)}</select></div>
+      <div class="field"><label for="dSub">Subcategoria</label><input id="dSub" name="subcategoria" maxlength="60" value="${esc(d.subcategoria)}" placeholder="Opcional"></div>
+    </div></div>
+  ${novo?`<div class="grupo"><span class="grupo-t">Como é a cobrança</span>
+    <input type="hidden" name="modo" value="unica">
+    <div class="seg" id="segModo"><button type="button" aria-pressed="true" data-act="modo" data-v="unica">Única</button><button type="button" aria-pressed="false" data-act="modo" data-v="parcelada">Parcelada</button><button type="button" aria-pressed="false" data-act="modo" data-v="mensal">Todo mês</button></div>
+    <div class="form-grid" data-show="parcelada" style="margin-top:12px">
+      <div class="field"><label for="dAtual">Parcela que vou pagar agora</label><input id="dAtual" name="parcelaAtual" type="number" inputmode="numeric" min="1" max="120" value="1"></div>
+      <div class="field"><label for="dTotal">Total de parcelas</label><input id="dTotal" name="totalParcelas" type="number" inputmode="numeric" min="2" max="120" value="12"></div>
+      <div class="field full"><span class="lbl">O valor informado abaixo é</span><div class="seg" id="segValor"><button type="button" aria-pressed="true" data-act="modoValor" data-v="parcela">O valor de cada parcela</button><button type="button" aria-pressed="false" data-act="modoValor" data-v="total">O total da compra</button></div><input type="hidden" name="modoValor" value="parcela"></div>
+    </div>
+    <p class="note" id="parcPrev" data-show="parcelada" style="margin:12px 0 0"></p>
+    <p class="note" data-show="mensal" style="margin:12px 0 0">Vira uma conta fixa: a cada mês, no Planejamento, você lança a conta do mês com um toque, já com valor, vencimento e chave Pix.</p>
+  </div>`:(grupo?`<div class="grupo"><span class="grupo-t">Parcelamento</span>
+    <div class="form-grid">
+      <div class="field"><label for="dAtual">Esta é a parcela nº</label><input id="dAtual" name="parcelaAtual" type="number" inputmode="numeric" min="1" max="120" value="${d.parcelaAtual}"></div>
+      <div class="field"><label for="dTotal">De um total de</label><input id="dTotal" name="totalParcelas" type="number" inputmode="numeric" min="2" max="120" value="${d.parcelas}"></div>
+      <label class="check full"><input type="checkbox" name="aplicarProximas" checked> Ajustar também as próximas parcelas (numeração, valor e chave Pix)</label>
+    </div>
+    <p class="note" id="parcPrev" style="margin:12px 0 0"></p></div>`:'')}
+  <div class="grupo"><span class="grupo-t">Valor e datas</span>
+    <div class="form-grid">
+      <div class="field"><label for="dValor" id="dValorLbl">${grupo?'Valor desta parcela (R$)':'Valor (R$)'}</label><input id="dValor" name="valor" inputmode="decimal" required value="${fmtInput(d.valor)}" placeholder="0,00"></div>
+      <div class="field"><label for="dVenc" id="dVencLbl">${grupo?'Vencimento desta parcela':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
+      <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['pendente','A pagar'],['paga','Paga'],['prevista','Prevista'],['cancelada','Cancelada']],d.situacao)}</select></div>
+      <div class="field" data-show="paga"><label for="dPag">Pago em</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
+      <div class="field"><label for="dPer">Pagar com o recebimento</label><select id="dPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
+      <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['variavel','Variável'],['fixa','Fixa']],d.comportamento)}</select></div>
+      <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
+      <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
+    </div></div>
+  ${blocoPix(d)}
+  <div class="field"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
+  ${rodape(novo?'Salvar despesa':'Salvar alterações')}</form>`;
 }
 function wireDespesa(root){
-  const f=root.querySelector('form'), sit=f.elements.situacao, parc=f.elements.parcelas;
-  const sync=()=>{ root.querySelectorAll('[data-show="paga"]').forEach(el=>el.hidden=sit.value!=='paga');
-    if(parc){ const n=+parc.value||1; root.querySelector('[data-show="parc"]').hidden=n<=1; root.querySelector('[data-show="rec"]').hidden=n>1;
-      $('#dValorLbl').textContent = n>1 ? (f.elements.modoValor.value==='total'?'Valor total da compra (R$)':'Valor de cada parcela (R$)') : 'Valor (R$)'; } };
+  const f=root.querySelector('form'), E=f.elements, novo=!f.dataset.id;
+  const sync=()=>{
+    root.querySelectorAll('[data-show="paga"]').forEach(el=>el.hidden=E.situacao.value!=='paga');
+    root.querySelectorAll('[data-show="pix"]').forEach(el=>el.hidden=E.formaPagamento.value!=='Pix');
+    const prev=$('#parcPrev'); if(!prev) return;
+    const modo=E.modo?.value||'parcelada';
+    if(novo){ root.querySelectorAll('[data-show="parcelada"]').forEach(el=>el.hidden=modo!=='parcelada'); root.querySelectorAll('[data-show="mensal"]').forEach(el=>el.hidden=modo!=='mensal');
+      $('#dValorLbl').textContent = modo==='parcelada' ? (E.modoValor.value==='total'?'Valor total da compra (R$)':'Valor de cada parcela (R$)') : 'Valor (R$)';
+      $('#dVencLbl').textContent = modo==='parcelada' ? 'Vencimento desta parcela' : (modo==='mensal'?'Vencimento deste mês':'Vencimento'); }
+    if(modo!=='parcelada' && novo) return;
+    const A=parseInt(E.parcelaAtual.value)||1, N=parseInt(E.totalParcelas.value)||1, v=parseValor(E.valor.value), venc=E.vencimento.value;
+    if(N<2||A<1||A>N){ prev.textContent='A parcela atual precisa estar entre 1 e o total de parcelas.'; return; }
+    const vp = novo && E.modoValor.value==='total' ? r2(v/N) : v;
+    const qtd=N-A+1, fim=venc?addMesData(venc,qtd-1):'';
+    if(novo) prev.innerHTML = `Serão lançadas <b>${qtd===1?'a parcela '+A:`as parcelas ${A} a ${N}`}</b> (${qtd} ${qtd===1?'parcela':'parcelas'}${vp>0?' de '+money(vp):''})${venc?`, de ${mesCurto(venc.slice(0,7))} a ${mesCurto(fim.slice(0,7))}`:''}.${vp>0?` Restante a pagar: <b>${money(vp*qtd)}</b>.`:''}${A>1?` As parcelas 1 a ${A-1} são consideradas já pagas e não entram no sistema.`:''}`;
+    else prev.innerHTML = E.aplicarProximas.checked ? `As parcelas seguintes serão renumeradas a partir da ${A+1}, até a ${N}. Parcelas a pagar que passarem de ${N} serão excluídas; se faltar alguma, ela será criada mês a mês.` : 'Só este lançamento será alterado.';
+  };
   f.addEventListener('input',sync); f.addEventListener('change',sync); sync();
+}
+function camposDespesa(fd){
+  return {descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim(),
+    chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():''};
 }
 async function salvarDespesa(f){
   const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, valor=parseValor(fd.valor);
   if(!fd.descricao.trim()) return 'Informe a descrição.';
-  if(!(valor>0)) return 'Informe um valor maior que zero, por exemplo 129,90.';
+  if(!(valor>0)) return 'Informe um valor maior que zero, por exemplo 202,00.';
   if(!fd.categoria) return 'Escolha uma categoria.';
   if(!fd.vencimento) return 'Informe a data de vencimento.';
-  const agora=new Date().toISOString();
-  const base={descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim()};
-  if(id){ await atualizar('despesas',id,{...base,valor:r2(valor),vencimento:fd.vencimento,atualizadoEm:agora}); toast('Despesa atualizada.'); return; }
-  const n=Math.max(1,Math.min(72,parseInt(fd.parcelas)||1));
-  if(n>1){
-    const total = fd.modoValor==='parcela' ? r2(valor*n) : r2(valor);
-    const vp=r2(Math.floor(total/n*100)/100), ult=r2(total-vp*(n-1)), grupo='g'+uid();
-    const rows=[]; for(let i=0;i<n;i++) rows.push({...base,valor:i===n-1?ult:vp,valorTotal:total,parcelas:n,parcelaAtual:i+1,grupoParcela:grupo,vencimento:addMesData(fd.vencimento,i),situacao:i===0?base.situacao:'pendente',dataPagamento:i===0?base.dataPagamento:''});
-    await inserir('despesas',rows); toast(`${n} parcelas criadas. Só o valor de cada parcela entra em cada mês.`); return;
+  const base=camposDespesa(fd), agora=new Date().toISOString();
+  if(id) return editarDespesa(f,fd,base,valor);
+  const modo=fd.modo||'unica';
+  if(modo==='parcelada'){
+    const A=parseInt(fd.parcelaAtual)||1, N=parseInt(fd.totalParcelas)||0;
+    if(N<2) return 'Informe o total de parcelas (2 ou mais).';
+    if(A<1||A>N) return `A parcela atual precisa estar entre 1 e ${N}.`;
+    const total = fd.modoValor==='total' ? r2(valor) : r2(valor*N);
+    const vp = fd.modoValor==='total' ? r2(Math.floor(total/N*100)/100) : r2(valor);
+    const ult = fd.modoValor==='total' ? r2(total-vp*(N-1)) : vp;
+    const arq=await enviarArquivo(); const grupo='g'+uid(); const rows=[];
+    for(let n=A;n<=N;n++){ const i=n-A;
+      rows.push({...base,valor:n===N?ult:vp,valorTotal:total,parcelas:N,parcelaAtual:n,grupoParcela:grupo,vencimento:addMesData(fd.vencimento,i),
+        situacao:i===0?base.situacao:'pendente',dataPagamento:i===0?base.dataPagamento:'',...(i===0&&arq?arq:{})}); }
+    await inserir('despesas',rows); toast(`${rows.length} ${rows.length>1?'parcelas lançadas':'parcela lançada'} (${A} a ${N}).`); return;
   }
+  const arq=await enviarArquivo();
   let recorrenciaId='';
-  if(fd.recorrente){ recorrenciaId=await inserir('recorrencias',{descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),ativo:true}); base.comportamento='fixa'; }
-  await inserir('despesas',{...base,valor:r2(valor),vencimento:fd.vencimento,parcelas:1,recorrenciaId});
-  toast('Despesa salva.');
+  if(modo==='mensal'){ recorrenciaId=await inserir('recorrencias',{descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),ativo:true,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}); base.comportamento='fixa'; }
+  await inserir('despesas',{...base,valor:r2(valor),vencimento:fd.vencimento,parcelas:1,recorrenciaId,...(arq||{})});
+  toast(modo==='mensal'?'Conta fixa salva. Nos próximos meses, lance pelo Planejamento.':'Despesa salva.');
 }
+async function editarDespesa(f,fd,base,valor){
+  const id=f.dataset.id, d=S.desp.find(x=>x.id===id); if(!d) return 'Este lançamento não existe mais. Feche e atualize a página.';
+  const agora=new Date().toISOString(), arq=await enviarArquivo();
+  const grupo=(+d.parcelas||1)>1 && d.grupoParcela;
+  if(!grupo){
+    await atualizar('despesas',id,{...base,valor:r2(valor),vencimento:fd.vencimento,atualizadoEm:agora,...(arq||{})});
+    if(arq && d.comprovante) apagarArquivos([d.comprovante]);
+    toast('Despesa atualizada.'); return;
+  }
+  const A=parseInt(fd.parcelaAtual)||d.parcelaAtual, N=parseInt(fd.totalParcelas)||d.parcelas;
+  if(N<2) return 'O total de parcelas precisa ser 2 ou mais.';
+  if(A<1||A>N) return `A parcela precisa estar entre 1 e ${N}.`;
+  const ups=[{id, dados:{...base,valor:r2(valor),vencimento:fd.vencimento,parcelaAtual:A,parcelas:N,atualizadoEm:agora,...(arq||{})}}];
+  const apagar=[], criar=[];
+  if(fd.aplicarProximas){
+    const doGrupo=S.desp.filter(x=>x.grupoParcela===d.grupoParcela && x.id!==id).sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
+    const antes=doGrupo.filter(x=>(x.vencimento||'')<(d.vencimento||'')).reverse(), depois=doGrupo.filter(x=>(x.vencimento||'')>=(d.vencimento||''));
+    let n=A; for(const x of antes){ n--; ups.push({id:x.id,dados:{parcelaAtual:Math.max(1,n),parcelas:N}}); }
+    n=A; let ultimo=fd.vencimento;
+    for(const x of depois){ n++;
+      if(n<=N){ ups.push({id:x.id,dados:{parcelaAtual:n,parcelas:N,...(x.situacao!=='paga'?{valor:r2(valor),descricao:base.descricao,categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}:{})}}); ultimo=x.vencimento; }
+      else if(x.situacao!=='paga') apagar.push(x);
+      else ups.push({id:x.id,dados:{parcelaAtual:n,parcelas:Math.max(N,n)}});
+    }
+    while(n<N){ n++; ultimo=addMesData(ultimo,1);
+      criar.push({...base,situacao:'pendente',dataPagamento:'',valor:r2(valor),valorTotal:d.valorTotal,parcelas:N,parcelaAtual:n,grupoParcela:d.grupoParcela,vencimento:ultimo}); }
+  }
+  for(const u of ups) chk(await sb.from('despesas').update(toDb(u.dados)).eq('id',u.id).eq('espaco_id',S.esp));
+  if(apagar.length){ chk(await sb.from('despesas').delete().in('id',apagar.map(x=>x.id)).eq('espaco_id',S.esp)); apagarArquivos(apagar.map(x=>x.comprovante)); }
+  if(criar.length) chk(await sb.from('despesas').insert(criar.map(r=>({...toDb(r),espaco_id:S.esp}))));
+  if(arq && d.comprovante) apagarArquivos([d.comprovante]);
+  await recarregar('despesas');
+  toast(fd.aplicarProximas ? `Parcelamento ajustado: parcela ${A} de ${N}${apagar.length?`, ${apagar.length} excluída${apagar.length>1?'s':''}`:''}${criar.length?`, ${criar.length} criada${criar.length>1?'s':''}`:''}.` : 'Parcela atualizada.');
+}
+
+/* ---------- formulário de receita ---------- */
 function formReceita(r){
   const novo=!r; r=r||{situacao:'prevista',origem:'Salário',dataPrevista:S.mes+'-10',periodo:''};
   return `<form data-form="receita" data-id="${r.id||''}">${head(novo?'Nova receita':'Editar receita')}
   ${novo?`<div class="seg"><button type="button" aria-pressed="false" data-act="novo" data-tipo="despesa">Despesa</button><button type="button" aria-pressed="true">Receita</button></div>`:''}
-  <div class="form-grid">
-    <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
-    <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
-    <div class="field"><label for="rPrev">Valor previsto (R$)</label><input id="rPrev" name="valorPrevisto" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}" placeholder="0,00"></div>
-    <div class="field"><label for="rData">Data prevista</label><input id="rData" name="dataPrevista" type="date" required value="${r.dataPrevista||''}"></div>
-    <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
-    <div class="field"><label for="rSit">Situação</label><select id="rSit" name="situacao">${opts([['prevista','Prevista'],['recebida','Recebida'],['cancelada','Cancelada']],r.situacao)}</select></div>
-    <div class="field" data-show="rec"><label for="rReal">Valor efetivamente recebido (R$)</label><input id="rReal" name="valorRecebido" inputmode="decimal" value="${fmtInput(r.valorRecebido)}" placeholder="0,00"></div>
-    <div class="field" data-show="rec"><label for="rEf">Data do recebimento</label><input id="rEf" name="dataEfetiva" type="date" value="${r.dataEfetiva||hoje()}"></div>
-    <div class="field full"><label for="rObs">Observações</label><textarea id="rObs" name="obs" rows="2" maxlength="500">${esc(r.obs)}</textarea></div>
-  </div>${rodape(novo?'Salvar receita':'Salvar alterações')}</form>`;
+  ${blocoAnexo(r,'Envie o comprovante do Pix ou da transferência recebida. Eu leio o valor, a data e quem pagou.')}
+  <div class="grupo"><span class="grupo-t">O que é</span>
+    <div class="form-grid">
+      <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
+      <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
+      <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
+    </div></div>
+  <div class="grupo"><span class="grupo-t">Previsto</span>
+    <div class="form-grid">
+      <div class="field"><label for="rPrev">Valor previsto (R$)</label><input id="rPrev" name="valorPrevisto" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}" placeholder="0,00"></div>
+      <div class="field"><label for="rData">Data prevista</label><input id="rData" name="dataPrevista" type="date" required value="${r.dataPrevista||''}"></div>
+    </div></div>
+  <div class="grupo"><span class="grupo-t">Recebido</span>
+    <div class="form-grid">
+      <div class="field"><label for="rSit">Situação</label><select id="rSit" name="situacao">${opts([['prevista','A receber'],['recebida','Recebida'],['cancelada','Cancelada']],r.situacao)}</select></div>
+      <div class="field" data-show="rec"><label for="rReal">Valor recebido (R$)</label><input id="rReal" name="valorRecebido" inputmode="decimal" value="${fmtInput(r.valorRecebido)}" placeholder="0,00"></div>
+      <div class="field" data-show="rec"><label for="rEf">Recebido em</label><input id="rEf" name="dataEfetiva" type="date" value="${r.dataEfetiva||hoje()}"></div>
+    </div></div>
+  <div class="field"><label for="rObs">Observações</label><textarea id="rObs" name="obs" rows="2" maxlength="500">${esc(r.obs)}</textarea></div>
+  ${rodape(novo?'Salvar receita':'Salvar alterações')}</form>`;
 }
 function wireReceita(root){ const f=root.querySelector('form'); const sync=()=>root.querySelectorAll('[data-show="rec"]').forEach(el=>el.hidden=f.elements.situacao.value!=='recebida'); f.addEventListener('change',sync); sync(); }
 async function salvarReceita(f){
@@ -538,8 +712,9 @@ async function salvarReceita(f){
   if(!fd.dataPrevista) return 'Informe a data prevista.';
   let vr=null; if(fd.situacao==='recebida'){ vr=parseValor(fd.valorRecebido); if(isNaN(vr)) vr=vp; if(vr<0) return 'O valor recebido não pode ser negativo.'; }
   const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
-  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim()};
-  if(id){ await atualizar('receitas',id,{...dados,atualizadoEm:new Date().toISOString()}); toast('Receita atualizada.'); }
+  const arq=await enviarArquivo();
+  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
+  if(id){ const old=S.rec.find(x=>x.id===id); await atualizar('receitas',id,{...dados,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]); toast('Receita atualizada.'); }
   else { await inserir('receitas',dados); toast('Receita salva.'); }
 }
 function abrirCat(c){
@@ -566,24 +741,41 @@ const acoes = {
     if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(d) abrirModal(formDespesa(d),salvarDespesa,wireDespesa); }
     else { const r=S.rec.find(x=>x.id===id); if(r) abrirModal(formReceita(r),salvarReceita,wireReceita); } },
   pagar: el => { const d=S.desp.find(x=>x.id===el.dataset.id); if(!d) return;
-    abrirModal(`<form data-form="quick">${head('Marcar como paga')}<p class="muted" style="margin:0">${esc(d.descricao)} · vence ${dataBR(d.vencimento)}</p><div class="form-grid"><div class="field"><label for="qV">Valor pago (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(d.valor)}"></div><div class="field"><label for="qD">Data do pagamento</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar pagamento','sage')}</form>`,
-    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o valor pago.'; await atualizar('despesas',d.id,{situacao:'paga',valor:r2(v),dataPagamento:f.elements.d.value}); toast('Pagamento registrado.'); }); },
+    abrirModal(`<form data-form="quick" data-ref="${d.id}">${head('Marcar como paga')}<p class="muted" style="margin:0">${esc(d.descricao)}${(+d.parcelas||1)>1?` · parcela ${d.parcelaAtual} de ${d.parcelas}`:''} · vence ${dataBR(d.vencimento)}</p>
+      ${d.pixCopiaCola||d.chavePix?`<div class="pix-box"><div><span class="small muted">Chave Pix salva</span><b>${esc(d.chavePix||'Pix copia e cola')}</b></div><button type="button" class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}">${icon(I.copy)}Copiar</button></div>`:''}
+      ${blocoAnexo(d,'Anexe o comprovante do pagamento. Eu confiro o valor e a data para você.')}
+      <div class="form-grid"><div class="field"><label for="qV">Valor pago (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(d.valor)}"></div><div class="field"><label for="qD">Pago em</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar pagamento','sage')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o valor pago.'; const arq=await enviarArquivo();
+      await atualizar('despesas',d.id,{situacao:'paga',valor:r2(v),dataPagamento:f.elements.d.value,...(arq||{})}); if(arq&&d.comprovante) apagarArquivos([d.comprovante]); toast('Pagamento registrado.'); }); },
   receber: el => { const r=S.rec.find(x=>x.id===el.dataset.id); if(!r) return;
-    abrirModal(`<form data-form="quick">${head('Registrar recebimento')}<p class="muted" style="margin:0">${esc(r.descricao)} · previsto ${money(r.valorPrevisto)} em ${dataBR(r.dataPrevista)}</p><div class="form-grid"><div class="field"><label for="qV">Valor recebido (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}"></div><div class="field"><label for="qD">Data do recebimento</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar recebimento','sage')}</form>`,
-    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>=0)) return 'Informe o valor recebido.'; await atualizar('receitas',r.id,{situacao:'recebida',valorRecebido:r2(v),dataEfetiva:f.elements.d.value}); toast('Recebimento registrado.'); }); },
+    abrirModal(`<form data-form="quick" data-ref="${r.id}">${head('Registrar recebimento')}<p class="muted" style="margin:0">${esc(r.descricao)} · previsto ${money(r.valorPrevisto)} em ${dataBR(r.dataPrevista)}</p>
+      ${blocoAnexo(r,'Anexe o comprovante do recebimento, se tiver.')}
+      <div class="form-grid"><div class="field"><label for="qV">Valor recebido (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}"></div><div class="field"><label for="qD">Recebido em</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar recebimento','sage')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>=0)) return 'Informe o valor recebido.'; const arq=await enviarArquivo();
+      await atualizar('receitas',r.id,{situacao:'recebida',valorRecebido:r2(v),dataEfetiva:f.elements.d.value,...(arq||{})}); if(arq&&r.comprovante) apagarArquivos([r.comprovante]); toast('Recebimento registrado.'); }); },
+  modo: el => { definirSeg(el.closest('form'),'modo',el.dataset.v); },
+  modoValor: el => { definirSeg(el.closest('form'),'modoValor',el.dataset.v); },
+  escolherArquivo: () => { const i=$('#arqComp'); if(i){ i.value=''; i.click(); } },
+  enviarComprovante: el => { acoes.novo(el); const i=$('#arqComp'); if(i) i.click(); },
+  verComp: async el => { const path=el.dataset.path; if(!path) return; const w=window.open('','_blank');
+    try{ const d=chk(await sb.storage.from('comprovantes').createSignedUrl(path,600)); if(w) w.location.href=d.signedUrl; else abrirModal(`<div>${head('Comprovante')}</div><p style="margin:0"><a class="btn primary" href="${esc(d.signedUrl)}" target="_blank" rel="noopener">Abrir comprovante</a></p>`,null); }
+    catch(e){ if(w) w.close(); dbErr(e); } },
+  copiarPix: async el => { const d=S.desp.find(x=>x.id===el.dataset.id)||S.recor.find(x=>x.id===el.dataset.id); if(!d) return; const txt=d.pixCopiaCola||d.chavePix;
+    try{ await navigator.clipboard.writeText(txt); toast(d.pixCopiaCola?'Pix copia e cola copiado. Cole no app do banco.':'Chave Pix copiada. Cole no app do banco.'); }
+    catch(_){ abrirModal(`<div>${head('Chave Pix')}</div><p class="small muted" style="margin:0">Toque e segure para copiar.</p><p class="code" style="word-break:break-all;margin:0">${esc(txt)}</p>`,null); } },
   periodo: el => atualizar('despesas',el.dataset.id,{periodo:el.dataset.p}),
   periodoR: el => atualizar('receitas',el.dataset.id,{periodo:el.dataset.p}),
   excluir: el => { const col=el.dataset.col, id=el.dataset.id;
     if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(!d) return;
       if(d.grupoParcela){ const prox=S.desp.filter(x=>x.grupoParcela===d.grupoParcela&&(+x.parcelaAtual)>=(+d.parcelaAtual));
         confirmar('Excluir parcela',`${esc(d.descricao)} é a parcela ${d.parcelaAtual} de ${d.parcelas}. O que deseja excluir?`,[
-          {t:'Só esta parcela',cls:'',fn:async()=>{ await remover('despesas',id); toast('Parcela excluída.'); }},
-          {t:`Esta e as próximas (${prox.length})`,fn:async()=>{ await remover('despesas',prox.map(x=>x.id)); toast(`${prox.length} parcelas excluídas.`); }}]);
-      } else confirmar('Excluir despesa',`Excluir “${esc(d.descricao)}” (${money(d.valor)})? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('despesas',id); toast('Despesa excluída.'); }}]);
-    } else { const r=S.rec.find(x=>x.id===id); if(!r) return; confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); toast('Receita excluída.'); }}]); } },
+          {t:'Só esta parcela',cls:'',fn:async()=>{ await remover('despesas',id); apagarArquivos([d.comprovante]); toast('Parcela excluída.'); }},
+          {t:`Esta e as próximas (${prox.length})`,fn:async()=>{ await remover('despesas',prox.map(x=>x.id)); apagarArquivos(prox.map(x=>x.comprovante)); toast(`${prox.length} parcelas excluídas.`); }}]);
+      } else confirmar('Excluir despesa',`Excluir “${esc(d.descricao)}” (${money(d.valor)})? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('despesas',id); apagarArquivos([d.comprovante]); toast('Despesa excluída.'); }}]);
+    } else { const r=S.rec.find(x=>x.id===id); if(!r) return; confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); apagarArquivos([r.comprovante]); toast('Receita excluída.'); }}]); } },
   conf: async el => { const fn=confirmar.cb?.[+el.dataset.i]; if(!fn) return; el.disabled=true; try{ await fn(); fecharModal(); }catch(e){ dbErr(e); el.disabled=false; } },
   gerarRecorrentes: async el => { el.disabled=true; const ym=S.mes, faltam=recorrentesFaltando(ym); const [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
-    try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id})));
+    try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||''})));
       toast(`${faltam.length} ${faltam.length>1?'contas fixas lançadas':'conta fixa lançada'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
   copiarOrc: async () => { await salvarOrc(S.mes,{...orcamentoMes(addMes(S.mes,-1))}); toast('Orçamento copiado do mês anterior.'); },
   novaCat: () => abrirCat(),
@@ -598,10 +790,13 @@ const acoes = {
       <div class="field"><label for="tDia">Dia do vencimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
       <div class="field"><label for="tC">Categoria</label><select id="tC" name="categoria">${opts(S.cats.map(c=>[c.id,c.nome]),t.categoria)}</select></div>
       <div class="field"><label for="tP">Pagar com o recebimento</label><select id="tP" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
+      <div class="field"><label for="tF">Forma de pagamento</label><select id="tF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),t.formaPagamento)}</select></div>
+      <div class="field"><label for="tK">Chave Pix</label><input id="tK" name="chave" maxlength="140" autocomplete="off" value="${esc(t.chavePix)}"></div>
+      <div class="field full"><label for="tCC">Pix copia e cola (opcional)</label><input id="tCC" name="copia" maxlength="600" autocomplete="off" value="${esc(t.pixCopiaCola)}"></div>
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (gera lançamento todo mês)</label></div>
       <p class="note">Contas já lançadas não mudam. Para corrigir um mês específico, edite o lançamento no Financeiro.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
-      await atualizar('recorrencias',t.id,{descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked}); toast('Conta recorrente atualizada.'); }); },
+      await atualizar('recorrencias',t.id,{descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()}); toast('Conta recorrente atualizada.'); }); },
   delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; confirmar('Excluir conta recorrente',`Excluir o modelo “${esc(t.descricao)}”? Os lançamentos já feitos continuam no Financeiro.`,[{t:'Excluir modelo',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
   exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc)};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
@@ -662,6 +857,7 @@ document.addEventListener('submit', async e=>{
 });
 document.addEventListener('change', async e=>{
   const t=e.target;
+  if(t.id==='arqComp'){ processarAnexo(t); return; }
   if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
   else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }

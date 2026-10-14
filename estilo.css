@@ -212,3 +212,23 @@ body.locked .app{grid-template-columns:minmax(0,1fr)}
 .who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:18px;letter-spacing:.12em;background:var(--surface);border-radius:8px;padding:6px 12px;user-select:all}
 html,body{height:auto;min-height:100%}
+
+/* ---------- formulários em grupos ---------- */
+.grupo{display:flex;flex-direction:column;gap:10px;padding-top:14px;border-top:1px solid var(--line)}
+.grupo-t{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;color:var(--muted)}
+.field input.lido,.field select.lido,.field textarea.lido{border-color:var(--sage);background:var(--sage-soft)}
+.anexo{border:1px dashed var(--line);border-radius:12px;padding:12px 14px;background:var(--surface)}
+.anexo-linha{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.anexo-ic{width:36px;height:36px;border-radius:10px;background:var(--blue-soft);color:var(--blue);display:grid;place-items:center;flex:none}
+.anexo-ic svg{width:18px;height:18px}
+.anexo-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 200px;font-size:13.5px}
+.anexo-txt span{color:var(--muted)}
+.anexo-txt b{overflow-wrap:anywhere}
+.anexo-ops{display:flex;gap:6px}
+.pix-box{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--sage-soft);border-radius:12px;padding:12px 14px}
+.pix-box div{display:flex;flex-direction:column;min-width:0}
+.pix-box b{overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.btn.pixbtn{background:var(--sage-soft);color:var(--sage);border-color:transparent}
+.btn.pixbtn:hover{border-color:var(--sage)}
+.pill.parc{background:var(--blue-soft);color:var(--blue)}
+.seg button{white-space:normal;line-height:1.25}

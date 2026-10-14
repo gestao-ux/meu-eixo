@@ -1,0 +1,689 @@
+/* =====================================================================
+   MEU EIXO · aplicação web
+   Banco, login e sincronização: Supabase. Hospedagem: Vercel.
+   ===================================================================== */
+(() => {
+'use strict';
+
+/* ---------- utilidades ---------- */
+const $ = s => document.querySelector(s);
+const BRL = new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
+const money = v => BRL.format(+v||0);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const r2 = v => Math.round((+v||0)*100)/100;
+const sum = (arr,f) => r2(arr.reduce((a,x)=>a+(+f(x)||0),0));
+const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+function hoje(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Cuiaba',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }
+const mesLabel = ym => { const [y,m]=ym.split('-'); return MESES[+m-1]+' '+y; };
+const mesCurto = ym => { const [y,m]=ym.split('-'); return MESES[+m-1].slice(0,3)+'/'+y.slice(2); };
+function addMes(ym,n){ let [y,m]=ym.split('-').map(Number); m+=n; while(m>12){m-=12;y++} while(m<1){m+=12;y--} return y+'-'+String(m).padStart(2,'0'); }
+function addMesData(d,n){ const dd=+d.slice(8,10); const ym=addMes(d.slice(0,7),n); const [Y,M]=ym.split('-').map(Number); const last=new Date(Y,M,0).getDate(); return ym+'-'+String(Math.min(dd,last)).padStart(2,'0'); }
+const dataBR = d => d ? d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4) : '—';
+const dataCurta = d => d ? d.slice(8,10)+'/'+d.slice(5,7) : '—';
+function diasEntre(a,b){ return Math.round((Date.parse(b+'T12:00:00Z')-Date.parse(a+'T12:00:00Z'))/864e5); }
+function parseValor(s){ if(typeof s==='number') return s; s=String(s||'').trim().replace(/[R$\s]/g,''); if(!s) return NaN;
+  if(!s.includes(',') && /^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
+  if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.'); const n=Number(s); return isFinite(n)?n:NaN; }
+const fmtInput = v => (v===undefined||v===null||v==='') ? '' : String(r2(v)).replace('.',',');
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const ls = { get(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(_){} }, del(k){ try{ localStorage.removeItem(k); }catch(_){} } };
+
+/* ---------- Supabase ---------- */
+const CFG = window.MEU_EIXO_CONFIG || {};
+const LEMBRAR = 'meuEixo.lembrar';
+// Sessão: "Manter conectada" guarda no aparelho; caso contrário, só até fechar o navegador.
+const armazenamento = {
+  getItem(k){ try{ return localStorage.getItem(k) ?? sessionStorage.getItem(k); }catch(_){ return null; } },
+  setItem(k,v){ try{ if(ls.get(LEMBRAR)==='0'){ sessionStorage.setItem(k,v); localStorage.removeItem(k); } else { localStorage.setItem(k,v); sessionStorage.removeItem(k); } }catch(_){} },
+  removeItem(k){ try{ localStorage.removeItem(k); sessionStorage.removeItem(k); }catch(_){} }
+};
+const configurado = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && window.supabase);
+const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, storage:armazenamento } }) : null;
+
+const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
+const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
+const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido']);
+function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
+function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
+const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
+
+/* ---------- estado ---------- */
+const S = { rec:[], desp:[], cats:[], recor:[], orc:{}, cfg:{}, espacos:[], esp:null, user:null, perfil:null,
+  mes:hoje().slice(0,7), view:'inicio', tab:'despesas', filtro:{sit:'',cat:''}, fase:'iniciando', auth:'login', authMsg:'', canal:null, membros:null };
+
+const NAV = [
+  {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
+  {id:'financeiro',t:'Financeiro',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
+  {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
+  {id:'alimentacao',t:'Alimentação',ic:'M7 3v8a3 3 0 0 0 3 3v7M7 3v5M10 3v5M17 3c-2 2-2 6 0 8v10',soon:5},
+  {id:'cardapios',t:'Cardápios e marmitas',ic:'M4 9h16v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3zM8 9V6h8v3',soon:6},
+  {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',soon:8},
+  {id:'despensa',t:'Despensa e estoque',ic:'M4 4h16v6H4zM4 10h16v10H4zM10 14h4',soon:8},
+  {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
+  {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01',soon:10},
+  {id:'config',t:'Configurações',ic:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z'}
+];
+const ORIGENS = ['Salário','Comissões','Renda extra','Reembolso','Outra'];
+const FORMAS = ['Pix','Débito','Crédito','Boleto','Dinheiro','Transferência','Débito automático','Outra'];
+const SIT_D = {prevista:'Prevista',pendente:'Pendente',paga:'Paga',atrasada:'Atrasada',cancelada:'Cancelada'};
+const SIT_R = {prevista:'Prevista',recebida:'Recebida',atrasada:'Atrasada',cancelada:'Cancelada'};
+
+/* ---------- regras de negócio ---------- */
+const compDesp = d => (d.vencimento||d.dataCompra||'').slice(0,7);
+const compRec = r => (r.dataPrevista||r.dataEfetiva||'').slice(0,7);
+function sitDesp(d){ if(d.situacao==='paga'||d.situacao==='cancelada') return d.situacao; if(d.vencimento && d.vencimento<hoje()) return 'atrasada'; return d.situacao||'pendente'; }
+function sitRec(r){ if(r.situacao==='recebida'||r.situacao==='cancelada') return r.situacao; if(r.dataPrevista && r.dataPrevista<hoje()) return 'atrasada'; return 'prevista'; }
+const ativa = x => x.situacao!=='cancelada';
+const despMes = ym => S.desp.filter(d=>compDesp(d)===ym);
+const recMes = ym => S.rec.filter(r=>compRec(r)===ym);
+const recEsperado = r => r.situacao==='recebida' ? (+r.valorRecebido||0) : (+r.valorPrevisto||0);
+const catById = id => S.cats.find(c=>c.id===id);
+const catNome = id => catById(id)?.nome || 'Sem categoria';
+const ehAlimentacao = d => !!catById(d.categoria)?.alimentacao;
+const espAtual = () => S.espacos.find(e=>e.id===S.esp);
+const souDono = () => espAtual()?.dono === S.user?.id;
+
+function resumo(ym){
+  const D = despMes(ym).filter(ativa), R = recMes(ym).filter(ativa);
+  const out = {
+    recPrev: sum(R,r=>r.valorPrevisto), recReal: sum(R.filter(r=>r.situacao==='recebida'),r=>r.valorRecebido), recEsp: sum(R,recEsperado),
+    despTot: sum(D,d=>d.valor), despPaga: sum(D.filter(d=>d.situacao==='paga'),d=>d.valor),
+    fixas: sum(D.filter(d=>d.comportamento==='fixa'),d=>d.valor), variaveis: sum(D.filter(d=>d.comportamento!=='fixa'),d=>d.valor),
+    parcelas: sum(D.filter(d=>(+d.parcelas||1)>1),d=>d.valor), pend: D.filter(d=>d.situacao!=='paga'), D, R };
+  out.pendVal = sum(out.pend,d=>d.valor); out.saldoPrev = r2(out.recEsp - out.despTot); out.saldoReal = r2(out.recReal - out.despPaga);
+  return out;
+}
+function saldoDisponivel(){
+  const c=S.cfg; if(c.saldoInicial===undefined||c.saldoInicial===null||!c.dataSaldo) return null;
+  let s=+c.saldoInicial;
+  for(const r of S.rec) if(r.situacao==='recebida' && r.dataEfetiva && r.dataEfetiva>=c.dataSaldo) s+= +r.valorRecebido||0;
+  for(const d of S.desp) if(d.situacao==='paga' && d.dataPagamento && d.dataPagamento>=c.dataSaldo) s-= +d.valor||0;
+  return r2(s);
+}
+function proximoRecebimento(){ const h=hoje(), d=+h.slice(8,10), ym=h.slice(0,7); if(d<10) return ym+'-10'; if(d<20) return ym+'-20'; return addMes(ym,1)+'-10'; }
+function periodo(ym,p){
+  const R=recMes(ym).filter(r=>ativa(r)&&(r.periodo||'')===p), D=despMes(ym).filter(d=>ativa(d)&&(d.periodo||'')===p);
+  const esper=sum(R,recEsperado), comp=sum(D,d=>d.valor), pagos=sum(D.filter(d=>d.situacao==='paga'),d=>d.valor);
+  return {R,D,prev:sum(R,r=>r.valorPrevisto),receb:sum(R.filter(r=>r.situacao==='recebida'),r=>r.valorRecebido),esper,comp,pagos,pend:r2(comp-pagos),saldo:r2(esper-comp)};
+}
+const parcelasFuturas = () => S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && d.situacao!=='paga');
+const orcamentoMes = ym => S.orc[ym]?.limites || {};
+const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),d=>d.valor);
+const recorrentesFaltando = ym => S.recor.filter(t=>t.ativo!==false && (t.inicio||'0000-00')<=ym && !S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===ym));
+
+function alertas(ym){
+  const a=[], h=hoje();
+  const atras=S.desp.filter(d=>sitDesp(d)==='atrasada');
+  if(atras.length) a.push({k:'danger',t:`${atras.length} ${atras.length>1?'contas vencidas':'conta vencida'} sem pagamento registrado (${money(sum(atras,d=>d.valor))}).`,h:'Se já pagou, marque como paga para manter o saldo correto. Se não, priorize no próximo recebimento.'});
+  const breve=S.desp.filter(d=>['pendente','prevista'].includes(sitDesp(d))&&d.vencimento&&diasEntre(h,d.vencimento)<=3);
+  if(breve.length) a.push({k:'warn',t:`${breve.length} ${breve.length>1?'contas vencem':'conta vence'} nos próximos 3 dias: ${breve.slice(0,3).map(d=>esc(d.descricao)).join(', ')}${breve.length>3?'…':''}.`,h:'Confira se o saldo do período cobre esses pagamentos.'});
+  const p10=periodo(ym,'10'), p20=periodo(ym,'20');
+  if(p10.comp>0 && p10.comp>p10.esper) a.push({k:'warn',t:`O período do dia 10 está sobrecarregado em ${money(p10.comp-p10.esper)}.`,h:'Veja no Planejamento quais contas podem ir para o dia 20. Nada é movido sem a sua decisão.'});
+  if((p20.comp>0||p20.esper>0) && p10.saldo+p20.saldo<0) a.push({k:'warn',t:`O período do dia 20 fecha negativo em ${money(Math.abs(p10.saldo+p20.saldo))}.`,h:'Revise gastos variáveis antes de assumir novos compromissos.'});
+  const lim=orcamentoMes(ym);
+  for(const c of S.cats){ const L=+lim[c.id]; if(!L) continue; const g=gastoCat(ym,c.id);
+    if(g>L) a.push({k:'danger',t:`${esc(c.nome)} passou do orçamento: ${money(g)} de ${money(L)}.`,h:'Avalie o que pode ser adiado ou reduzido nesta categoria até o fim do mês.'});
+    else if(g>=L*.85) a.push({k:'warn',t:`${esc(c.nome)} já usou ${Math.round(g/L*100)}% do orçamento.`,h:`Restam ${money(L-g)} para o mês.`}); }
+  const sd=saldoDisponivel();
+  if(sd!==null && ym===h.slice(0,7)){ const pr=proximoRecebimento(); const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
+    const prev=r2(sd-sum(ate,d=>d.valor)); if(prev<0) a.push({k:'danger',t:`O saldo previsto até ${dataCurta(pr)} fica negativo (${money(prev)}).`,h:'As contas que vencem antes do próximo recebimento superam o saldo em conta.'}); }
+  const rm=recorrentesFaltando(ym);
+  if(rm.length) a.push({k:'',t:`${rm.length} ${rm.length>1?'contas fixas ainda não foram lançadas':'conta fixa ainda não foi lançada'} em ${mesLabel(ym)}.`,h:'Use “Lançar contas fixas” no Planejamento para gerar esses compromissos.'});
+  return a;
+}
+
+/* ---------- acesso a dados ---------- */
+function erroAmigavel(e){
+  const m=(e?.message||'').toLowerCase();
+  if(m.includes('invalid login')) return 'E-mail ou senha incorretos.';
+  if(m.includes('email not confirmed')) return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';
+  if(m.includes('already registered')||m.includes('already been registered')) return 'Este e-mail já tem conta. Use “Entrar” ou “Esqueci minha senha”.';
+  if(m.includes('password should be')||m.includes('weak')) return 'A senha é fraca. Use pelo menos 8 caracteres, misturando letras e números.';
+  if(m.includes('rate limit')||m.includes('too many')) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
+  if(m.includes('código de convite')) return 'Código de convite não encontrado. Confira as letras e números.';
+  if(m.includes('failed to fetch')||m.includes('network')) return 'Sem conexão com o servidor. Verifique a internet e tente de novo.';
+  return e?.message || 'Algo não saiu como esperado. Tente novamente.';
+}
+function dbErr(e){ console.error(e); toast(erroAmigavel(e)); }
+const chk = ({data,error}) => { if(error) throw error; return data; };
+
+async function buscarTudo(t){
+  let out=[], de=0; const chave=TABELAS[t];
+  for(;;){ const data=chk(await sb.from(t).select('*').eq('espaco_id',S.esp).order(chave).range(de,de+999)); out=out.concat(data); if(data.length<1000) break; de+=1000; }
+  return out.map(fromDb);
+}
+function aplicar(t,rows){
+  if(t==='receitas') S.rec=rows;
+  else if(t==='despesas') S.desp=rows;
+  else if(t==='categorias') S.cats=rows.sort((a,b)=>(a.ordem??99)-(b.ordem??99)||a.nome.localeCompare(b.nome,'pt'));
+  else if(t==='recorrencias') S.recor=rows;
+  else if(t==='orcamentos') S.orc=Object.fromEntries(rows.map(r=>[r.mes,r]));
+  else if(t==='configuracoes') S.cfg=rows[0]||{};
+}
+async function recarregar(t){ const esp=S.esp; const rows=await buscarTudo(t); if(esp===S.esp){ aplicar(t,rows); schedule(); } }
+const pendentes=new Set(); let tRecarga=null;
+function recarregarDepois(t){ pendentes.add(t); clearTimeout(tRecarga); tRecarga=setTimeout(async()=>{ const ts=[...pendentes]; pendentes.clear(); try{ for(const x of ts) await recarregar(x); }catch(e){ console.error(e); } },400); }
+
+async function inserir(t,rows){ const arr=(Array.isArray(rows)?rows:[rows]).map(r=>({...toDb(r),espaco_id:S.esp})); const data=chk(await sb.from(t).insert(arr).select('id')); await recarregar(t); return data?.[0]?.id; }
+async function atualizar(t,id,patch){ chk(await sb.from(t).update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp)); await recarregar(t); }
+async function remover(t,ids){ ids=Array.isArray(ids)?ids:[ids]; chk(await sb.from(t).delete().in('id',ids).eq('espaco_id',S.esp)); await recarregar(t); }
+async function salvarOrc(mes,limites){ chk(await sb.from('orcamentos').upsert({espaco_id:S.esp,mes,limites},{onConflict:'espaco_id,mes'})); await recarregar('orcamentos'); }
+async function salvarCfg(p){ chk(await sb.from('configuracoes').upsert({espaco_id:S.esp,...toDb(p)},{onConflict:'espaco_id'})); await recarregar('configuracoes'); }
+
+async function carregarEspacos(){
+  const data=chk(await sb.from('espacos').select('*').order('criado_em'));
+  S.espacos=data.map(fromDb).sort((a,b)=>(a.tipo==='pessoal'?-1:1)-(b.tipo==='pessoal'?-1:1));
+}
+async function abrirEspaco(id){
+  S.esp=id; ls.set('meuEixo.espaco',id); S.membros=null; S.fase='carregando'; render();
+  if(S.canal){ sb.removeChannel(S.canal); S.canal=null; }
+  const tabs=Object.keys(TABELAS); const res=await Promise.all(tabs.map(buscarTudo));
+  if(S.esp!==id) return;
+  tabs.forEach((t,i)=>aplicar(t,res[i]));
+  S.canal=sb.channel('espaco-'+id);
+  for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
+  S.canal.subscribe();
+  S.fase='pronto'; render();
+}
+async function entrar(session){
+  S.user=session.user; S.fase='carregando'; render();
+  try{
+    await carregarEspacos();
+    if(!S.espacos.some(e=>e.tipo==='pessoal')){ chk(await sb.rpc('garantir_espaco_pessoal')); await carregarEspacos(); }
+    const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{};
+    const salvo=ls.get('meuEixo.espaco'); const alvo=S.espacos.find(e=>e.id===salvo)||S.espacos[0];
+    await abrirEspaco(alvo.id);
+  }catch(e){ dbErr(e); S.fase='erro'; render(); }
+}
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,membros:null,fase:'auth',auth:'login'}); render(); }
+
+/* ---------- render ---------- */
+let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
+const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11' };
+const logo = `<img src="icone.svg" width="56" height="56" alt="">`;
+
+function renderNav(){
+  $('#nav').innerHTML = `<div class="nav-label">Navegação</div>` + NAV.map(n=>`<button data-act="ir" data-v="${n.id}" ${S.view===n.id?'aria-current="page"':''}>${icon(n.ic)}<span>${n.t}</span>${n.soon?`<span class="soon">Etapa ${n.soon}</span>`:''}</button>`).join('');
+  $('#espacoSel').innerHTML = S.espacos.map(e=>`<option value="${e.id}" ${e.id===S.esp?'selected':''}>${esc(e.nome)}${e.tipo==='compartilhado'?' · compartilhado':''}</option>`).join('');
+  $('#quem').textContent = S.perfil?.nome || S.user?.email || '';
+}
+function render(){
+  const v=$('#view');
+  const travado = S.fase!=='pronto';
+  document.body.classList.toggle('locked',travado);
+  $('#monthLabel').textContent=mesLabel(S.mes);
+  if(!configurado){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=`<div class="lock"><div class="mark">${logo}</div><h2>Configuração pendente</h2><p class="lead">Preencha o endereço e a chave pública do Supabase no arquivo config.js e publique novamente.</p></div>`; return; }
+  if(S.fase==='iniciando'||S.fase==='carregando'){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=`<div class="empty" style="max-width:420px;margin:10vh auto 0"><strong>Abrindo o Meu Eixo</strong>Carregando seus dados com segurança…</div>`; return; }
+  if(S.fase==='erro'){ v.innerHTML=`<div class="lock"><div class="mark">${logo}</div><h2>Não foi possível carregar</h2><p class="lead">Verifique a conexão e tente novamente.</p><button class="btn primary" data-act="recarregarPagina">Tentar de novo</button></div>`; return; }
+  if(S.fase==='auth'){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=vAuth(); setTimeout(()=>{ const i=v.querySelector('input'); i&&i.focus(); },30); return; }
+  renderNav();
+  const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
+  $('#monthNav').hidden = S.view==='config';
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig};
+  v.innerHTML = (views[S.view]||vRoadmap)();
+  ls.set('meuEixo.view',S.view);
+  if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
+}
+
+/* ---------- telas de acesso ---------- */
+function vAuth(){
+  const msg = S.authMsg ? `<div class="ok-box">${S.authMsg}</div>` : '';
+  const lembrar = `<label class="check"><input type="checkbox" name="lembrar" ${ls.get(LEMBRAR)!=='0'?'checked':''}> Manter conectada neste aparelho</label>`;
+  if(S.auth==='cadastro') return `<div class="lock"><div class="mark">${logo}</div><h2>Criar conta</h2><p class="lead">Cada conta tem o próprio espaço, com dados que só a pessoa vê.</p>
+    <form data-form="cadastro">${msg}
+      <div class="field"><label for="aN">Seu nome</label><input id="aN" name="nome" autocomplete="name" required maxlength="60"></div>
+      <div class="field"><label for="aE">E-mail</label><input id="aE" name="email" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="aS">Senha</label><input id="aS" name="senha" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label for="aS2">Repita a senha</label><input id="aS2" name="senha2" type="password" autocomplete="new-password" minlength="8" required></div>
+      <p class="note" style="margin:0">Use pelo menos 8 caracteres, misturando letras e números.</p>
+      <p class="err" id="authErr"></p><button class="btn primary" type="submit">Criar conta</button>
+      <p class="switch">Já tem conta? <button type="button" class="link" data-act="auth" data-v="login">Entrar</button></p></form></div>`;
+  if(S.auth==='esqueci') return `<div class="lock"><div class="mark">${logo}</div><h2>Redefinir senha</h2><p class="lead">Enviaremos um link para você criar uma nova senha.</p>
+    <form data-form="esqueci">${msg}
+      <div class="field"><label for="aE">E-mail da conta</label><input id="aE" name="email" type="email" autocomplete="email" required></div>
+      <p class="err" id="authErr"></p><button class="btn primary" type="submit">Enviar link</button>
+      <p class="switch"><button type="button" class="link" data-act="auth" data-v="login">Voltar para entrar</button></p></form></div>`;
+  if(S.auth==='novaSenha') return `<div class="lock"><div class="mark">${logo}</div><h2>Crie uma nova senha</h2><p class="lead">Ela passa a valer em todos os aparelhos.</p>
+    <form data-form="novaSenha">
+      <div class="field"><label for="aS">Nova senha</label><input id="aS" name="senha" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label for="aS2">Repita a nova senha</label><input id="aS2" name="senha2" type="password" autocomplete="new-password" minlength="8" required></div>
+      <p class="err" id="authErr"></p><button class="btn primary" type="submit">Salvar nova senha</button></form></div>`;
+  return `<div class="lock"><div class="mark">${logo}</div><h2>Bem-vinda ao Meu Eixo</h2><p class="lead">Organize hoje. Viva com mais leveza.</p>
+    <form data-form="login">${msg}
+      <div class="field"><label for="aE">E-mail</label><input id="aE" name="email" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="aS">Senha</label><input id="aS" name="senha" type="password" autocomplete="current-password" required></div>
+      ${lembrar}<p class="err" id="authErr"></p><button class="btn primary" type="submit">Entrar</button>
+      <p class="switch"><button type="button" class="link" data-act="auth" data-v="esqueci">Esqueci minha senha</button></p>
+      <p class="switch">Ainda não tem conta? <button type="button" class="link" data-act="auth" data-v="cadastro">Criar conta</button></p></form></div>`;
+}
+
+/* ---------- componentes ---------- */
+function pillD(d){ const s=sitDesp(d); return `<span class="pill ${s}">${SIT_D[s]}</span>`; }
+function pillR(r){ const s=sitRec(r); return `<span class="pill ${s}">${SIT_R[s]}</span>`; }
+const pillP = p => p ? `<span class="pill p${p}">Dia ${p}</span>` : '';
+
+function rowDesp(d,o={}){
+  const s=sitDesp(d), parc=(+d.parcelas||1)>1?` · parcela ${d.parcelaAtual}/${d.parcelas}`:''; const ops=[];
+  if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Paga</button>`);
+  if(o.mover){ if(d.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="10">Dia 10</button>`); if(d.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="20">Dia 20</button>`); if(d.periodo) ops.push(`<button class="btn sm ghost" data-act="periodo" data-id="${d.id}" data-p="">Tirar do período</button>`); }
+  ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}${parc}</span><span>vence ${dataCurta(d.vencimento)}</span>${pillD(d)}${o.mover?'':pillP(d.periodo)}${d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+}
+function rowRec(r,o={}){
+  const s=sitRec(r); const ops=[];
+  if(s!=='recebida'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
+  if(o.mover){ if(r.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="10">Dia 10</button>`); if(r.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="20">Dia 20</button>`); }
+  ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
+  const val = s==='recebida' ? `${money(r.valorRecebido)}${r2(r.valorRecebido)!==r2(r.valorPrevisto)?`<div class="small muted">previsto ${money(r.valorPrevisto)}</div>`:''}` : money(r.valorPrevisto);
+  return `<div class="row"><div><div class="t">${esc(r.descricao)}</div><div class="meta"><span>${esc(r.origem||'')}</span><span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
+}
+const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
+
+/* ---------- telas ---------- */
+function vInicio(){
+  const ym=S.mes, rs=resumo(ym), sd=saldoDisponivel(), pr=proximoRecebimento(), h=hoje();
+  const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
+  const prevAte = sd===null?null:r2(sd-sum(ate,d=>d.valor));
+  const prox=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
+  const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
+  const fd=rs.D.filter(ehAlimentacao), lim=orcamentoMes(ym);
+  const orcAlim=r2(S.cats.filter(c=>c.alimentacao).reduce((a,c)=>a+(+lim[c.id]||0),0));
+  const gAlim=sum(fd,d=>d.valor), marm=sum(fd.filter(d=>catById(d.categoria)?.nome==='Marmitas compradas'),d=>d.valor);
+  return `
+  ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
+  <section><div class="section-head"><h2>Visão financeira</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
+    <div class="kpis">
+      <div class="kpi hero"><span class="lbl">Saldo disponível</span><span class="val">${sd===null?'—':money(sd)}</span><span class="sub">${sd===null?'<button class="btn sm ghost" data-act="ir" data-v="config" style="padding-left:0">Informe o saldo inicial</button>':'em conta, hoje'}</span></div>
+      <div class="kpi"><span class="lbl">Previsto até ${dataCurta(pr)}</span><span class="val ${prevAte!==null&&prevAte<0?'neg':''}">${prevAte===null?'—':money(prevAte)}</span><span class="sub">após ${ate.length} ${ate.length===1?'conta':'contas'} antes do recebimento</span></div>
+      <div class="kpi"><span class="lbl">Receitas do mês</span><span class="val pos">${money(rs.recReal)}</span><span class="sub">de ${money(rs.recPrev)} previstos</span></div>
+      <div class="kpi"><span class="lbl">Despesas do mês</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} já pagos</span></div>
+      <div class="kpi"><span class="lbl">Contas pendentes</span><span class="val">${money(rs.pendVal)}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'lançamento':'lançamentos'}</span></div>
+      <div class="kpi"><span class="lbl">Livre para não planejados</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">receitas menos todas as despesas do mês</span></div>
+    </div></section>
+  <div class="actions">
+    <button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Adicionar despesa</button>
+    <button class="btn" data-act="novo" data-tipo="receita">${icon(I.plus)}Registrar receita</button>
+    <button class="btn" data-act="ir" data-v="planejamento">Planejar dias 10 e 20</button>
+    <button class="btn" data-act="ir" data-v="relatorios">Consultar relatórios</button></div>
+  <div class="grid2">
+    <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
+    <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillP(d.periodo)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>
+  </div>
+  <div class="grid2">
+    <section class="panel"><h3>Composição das despesas</h3><div class="list">${linha('Despesas fixas',money(rs.fixas))}${linha('Despesas variáveis',money(rs.variaveis))}${linha('Parcelas neste mês',money(rs.parcelas))}${linha('Parcelas a pagar (todos os meses)',money(sum(parcelasFuturas(),d=>d.valor)))}</div></section>
+    <section class="panel"><h3>Alimentação no mês</h3><div class="list">${linha('Orçamento alimentar',orcAlim?money(orcAlim):'<span class="muted small">não definido</span>')}${linha('Gasto com alimentação',money(gAlim))}${linha('Marmitas prontas',money(marm))}</div>
+      <p class="note" style="margin:12px 0 0">Custo estimado das marmitas, próxima lista de compras e economia com refeições feitas em casa entram a partir das etapas 5 a 9, quando os cardápios e os preços de Cuiabá estiverem ativos.</p></section>
+  </div>`;
+}
+
+function vFinanceiro(){
+  const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
+  if(f.sit) D=D.filter(d=>sitDesp(d)===f.sit); if(f.cat) D=D.filter(d=>d.categoria===f.cat);
+  D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
+  const isD=S.tab==='despesas';
+  return `
+  <div class="kpis">
+    <div class="kpi"><span class="lbl">Receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} recebidos</span></div>
+    <div class="kpi"><span class="lbl">Despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} pagos</span></div>
+    <div class="kpi"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">realizado até agora ${money(rs.saldoReal)}</span></div>
+  </div>
+  <section>
+    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${!isD}" data-act="tab" data-v="receitas">Receitas (${R.length})</button></div>
+    <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}${isD?'Nova despesa':'Nova receita'}</button></div></div>
+    ${isD?`<div class="filters">
+      <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit"><option value="">Todas</option>${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat"><option value="">Todas</option>${S.cats.map(c=>`<option value="${c.id}" ${f.cat===c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
+    <div class="list">${isD?(D.length?D.map(d=>rowDesp(d)).join(''):`<div class="empty"><strong>Nenhuma despesa ${f.sit||f.cat?'com esses filtros':'em '+mesLabel(ym)}</strong>Use “Nova despesa” para registrar contas, compras parceladas ou despesas fixas.</div>`)
+      :(R.length?R.map(r=>rowRec(r)).join(''):`<div class="empty"><strong>Nenhuma receita em ${mesLabel(ym)}</strong>Cadastre salário, comissões e outras entradas com a data prevista. Depois registre o valor efetivamente recebido.</div>`)}</div>
+  </section>`;
+}
+
+function blocoPeriodo(ym,p,carry){
+  const P=periodo(ym,p), final=r2(P.saldo+(carry||0));
+  return `<article class="period">
+    <header><span class="day num">${p}</span><div><h3>Recebimento do dia ${p}</h3><span class="small muted">${p==='10'?'primeira metade do mês':'segunda metade do mês'}</span></div></header>
+    <div class="figs"><div>Previsto para receber<b>${money(P.prev)}</b></div><div>Efetivamente recebido<b class="pos">${money(P.receb)}</b></div><div>Compromissos<b>${money(P.comp)}</b></div><div>Pagos · pendentes<b>${money(P.pagos)} · ${money(P.pend)}</b></div>
+      ${carry!==undefined?`<div style="grid-column:1/-1">Sobra do período do dia 10<b class="${carry<0?'neg':''}">${money(carry)}</b></div>`:''}</div>
+    <div class="body">
+      ${P.R.length?`<div class="small muted" style="padding:8px 4px 0">Receitas</div><div class="list">${P.R.map(r=>rowRec(r,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Nenhuma receita atribuída a este período.</p>`}
+      ${P.D.length?`<div class="small muted" style="padding:8px 4px 0">Compromissos</div><div class="list">${P.D.map(d=>rowDesp(d,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:0 4px 8px">Nenhuma conta atribuída a este período.</p>`}
+    </div>
+    <footer><span class="small muted">Saldo previsto após os pagamentos</span><span class="big ${final<0?'neg':'pos'}">${money(final)}</span></footer></article>`;
+}
+function vPlanejamento(){
+  const ym=S.mes, p10=periodo(ym,'10');
+  const semD=despMes(ym).filter(d=>ativa(d)&&!d.periodo).sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
+  const semR=recMes(ym).filter(r=>ativa(r)&&!r.periodo), rs=resumo(ym), rm=recorrentesFaltando(ym);
+  const sobre=p10.comp>p10.esper&&p10.comp>0;
+  const cand=sobre?p10.D.filter(d=>d.situacao!=='paga'&&(d.comportamento!=='fixa'||+(d.vencimento||'').slice(8,10)>=20)):[];
+  const futuros=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&compDesp(d)>ym);
+  const lim=orcamentoMes(ym), temOrc=Object.keys(lim).length>0, temAnt=Object.keys(orcamentoMes(addMes(ym,-1))).length>0;
+  return `
+  ${rm.length?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>${rm.length} ${rm.length>1?'contas fixas recorrentes ainda não foram lançadas':'conta fixa recorrente ainda não foi lançada'} em ${mesLabel(ym)}: ${rm.map(t=>esc(t.descricao)).join(', ')}.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="gerarRecorrentes">Lançar contas fixas de ${MESES[+ym.slice(5)-1]}</button></div></div></div>`:''}
+  <section><div class="section-head"><h2>Visão mensal</h2><p>Tudo o que entra e sai em ${mesLabel(ym)}</p></div>
+    <div class="kpis">
+      <div class="kpi"><span class="lbl">Total de receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} já recebidos</span></div>
+      <div class="kpi"><span class="lbl">Total de despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} já pagos</span></div>
+      <div class="kpi hero"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">saldo realizado ${money(rs.saldoReal)}</span></div>
+      <div class="kpi"><span class="lbl">Dívidas e parcelas</span><span class="val">${money(sum(parcelasFuturas(),d=>d.valor))}</span><span class="sub">${money(rs.parcelas)} neste mês</span></div>
+      <div class="kpi"><span class="lbl">Compromissos futuros</span><span class="val">${money(sum(futuros,d=>d.valor))}</span><span class="sub">nos meses seguintes</span></div>
+    </div></section>
+  ${sobre?`<div class="alert warn"><span class="dot"></span><div><p>Os compromissos do dia 10 (${money(p10.comp)}) passam da receita prevista do período (${money(p10.esper)}) em ${money(p10.comp-p10.esper)}.</p><p class="hint">${cand.length?`Contas que podem ir para o dia 20 por serem variáveis ou vencerem depois do dia 20: ${cand.map(d=>esc(d.descricao)+' ('+money(d.valor)+')').join(', ')}. Use os botões em cada conta para decidir.`:'Revise os gastos variáveis do período. Nenhuma conta foi movida automaticamente.'}</p></div></div>`:''}
+  <section><div class="section-head"><h2>Recebimentos dos dias 10 e 20</h2><p>Atribua cada compromisso ao recebimento que vai pagá-lo.</p></div>
+    <div class="periods">${blocoPeriodo(ym,'10')}${blocoPeriodo(ym,'20',p10.saldo)}
+      <article class="period unassigned"><header><span class="day">·</span><div><h3>Sem período definido</h3><span class="small muted">aguardando a sua decisão</span></div></header>
+        <div class="figs"><div>Compromissos<b>${money(sum(semD,d=>d.valor))}</b></div><div>Receitas<b>${money(sum(semR,recEsperado))}</b></div></div>
+        <div class="body">${semR.length?`<div class="list">${semR.map(r=>rowRec(r,{mover:true})).join('')}</div>`:''}${semD.length?`<div class="list">${semD.map(d=>rowDesp(d,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Todas as contas do mês já têm período.</p>`}</div></article>
+    </div></section>
+  <section><div class="section-head"><h2>Orçamento por categoria</h2><p>Defina quanto pode gastar em cada categoria neste mês.</p><div class="right">${!temOrc&&temAnt?`<button class="btn sm" data-act="copiarOrc">${icon(I.copy)}Copiar de ${MESES[+addMes(ym,-1).slice(5)-1]}</button>`:''}</div></div>
+    ${S.cats.length?`<div class="scroll"><table><thead><tr><th>Categoria</th><th class="r">Orçamento planejado</th><th class="r">Gasto no mês</th><th class="r">Saldo do orçamento</th><th style="min-width:120px">Uso</th></tr></thead>
+      <tbody>${S.cats.map(c=>{ const L=+lim[c.id]||0, g=gastoCat(ym,c.id), pc=L?g/L:0, cls=pc>1?'danger':pc>=.85?'warn':'';
+        return `<tr><td>${esc(c.nome)}</td><td class="r"><input class="inline-input num" inputmode="decimal" aria-label="Orçamento de ${esc(c.nome)}" data-orc="${c.id}" value="${L?fmtInput(L):''}" placeholder="0,00"></td><td class="r">${money(g)}</td><td class="r ${L&&L-g<0?'neg':''}">${L?money(L-g):'—'}</td><td>${L?`<div class="bar ${cls}"><i style="width:${Math.min(100,pc*100).toFixed(0)}%"></i></div>`:'<span class="small muted">sem limite</span>'}</td></tr>`; }).join('')}</tbody></table></div>
+      <p class="small muted" style="margin-top:8px">O valor é salvo ao sair do campo. O gasto considera todas as despesas não canceladas do mês, pagas ou pendentes.</p>`
+      :`<div class="empty"><strong>Nenhuma categoria cadastrada</strong>Crie suas categorias em Configurações para montar o orçamento.</div>`}
+  </section>`;
+}
+
+function vRelatorios(){
+  const meses=[]; for(let i=5;i>=0;i--) meses.push(addMes(S.mes,-i));
+  const dados=meses.map(m=>{const r=resumo(m); return {m,rec:r.recEsp,desp:r.despTot};});
+  const max=Math.max(1,...dados.flatMap(d=>[d.rec,d.desp]));
+  const ym=S.mes, D=despMes(ym).filter(ativa), ant=despMes(addMes(ym,-1)).filter(ativa), rs=resumo(ym);
+  const porCat=S.cats.map(c=>({c,v:sum(D.filter(d=>d.categoria===c.id),d=>d.valor),a:sum(ant.filter(d=>d.categoria===c.id),d=>d.valor)})).filter(x=>x.v||x.a).sort((a,b)=>b.v-a.v);
+  const maior=[...D].sort((a,b)=>b.valor-a.valor)[0], temDados=dados.some(d=>d.rec||d.desp);
+  return `
+  <section class="panel"><h3>Receitas e despesas · últimos 6 meses</h3>
+    ${temDados?`<div class="legend" style="margin-bottom:12px"><span><i style="background:var(--sage)"></i>Receitas</span><span><i style="background:var(--blue)"></i>Despesas</span></div>
+    <div class="bars">${dados.map(d=>`<div class="item"><span class="muted num">${mesCurto(d.m)}</span><div class="track"><div class="b in" style="width:${(d.rec/max*100).toFixed(1)}%" title="Receitas ${money(d.rec)}"></div><div class="b out" style="width:${(d.desp/max*100).toFixed(1)}%" title="Despesas ${money(d.desp)}"></div></div></div>`).join('')}</div>
+    <div class="scroll" style="margin-top:16px"><table><thead><tr><th>Mês</th><th class="r">Receitas</th><th class="r">Despesas</th><th class="r">Saldo</th></tr></thead><tbody>${dados.map(d=>`<tr><td style="text-transform:capitalize">${mesLabel(d.m)}</td><td class="r">${money(d.rec)}</td><td class="r">${money(d.desp)}</td><td class="r ${d.rec-d.desp<0?'neg':'pos'}">${money(d.rec-d.desp)}</td></tr>`).join('')}</tbody></table></div>`
+    :`<div class="empty"><strong>Ainda não há movimentações registradas</strong>O comparativo aparece assim que houver receitas ou despesas nos últimos meses.</div>`}</section>
+  <div class="grid2">
+    <section class="panel"><h3>Gastos por categoria em ${mesLabel(ym)}</h3>
+      ${porCat.length?`<div class="scroll"><table><thead><tr><th>Categoria</th><th class="r">Mês</th><th class="r">Mês anterior</th><th class="r">Variação</th></tr></thead><tbody>${porCat.map(x=>{const dv=x.v-x.a; return `<tr><td>${esc(x.c.nome)}</td><td class="r">${money(x.v)}</td><td class="r">${money(x.a)}</td><td class="r ${dv>0?'neg':dv<0?'pos':''}">${x.a?(dv>0?'+':'')+(dv/x.a*100).toFixed(1).replace('.',',')+'%':'—'}</td></tr>`}).join('')}</tbody></table></div>`:`<p class="muted small">Sem despesas no mês selecionado.</p>`}</section>
+    <section class="panel"><h3>Destaques do mês</h3><div class="list">${linha('Categoria com maior gasto',porCat[0]&&porCat[0].v?esc(porCat[0].c.nome):'—')}${linha('Maior despesa individual',maior?esc(maior.descricao)+' · '+money(maior.valor):'—')}${linha('Despesas fixas · variáveis',money(rs.fixas)+' · '+money(rs.variaveis))}</div>
+      <p class="note" style="margin:12px 0 0">O relatório mensal automático, com análise do gestor pessoal e plano para o mês seguinte, chega na Etapa 11. Ele será gerado no primeiro dia útil de cada mês, no horário de Cuiabá.</p></section>
+  </div>`;
+}
+
+function vConfig(){
+  const c=S.cfg, e=espAtual(), dono=souDono(), comp=e?.tipo==='compartilhado';
+  const membros = comp ? (S.membros===null?'<p class="small muted">Carregando membros…</p>':`<div class="list">${S.membros.map(m=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(m.nome||m.email)}${m.usuario_id===S.user.id?' (você)':''}</div><div class="meta"><span>${esc(m.email)}</span><span class="pill">${m.papel==='dono'?'Criou o espaço':'Membro'}</span></div></div><div class="ops" style="grid-column:auto">${dono&&m.papel!=='dono'?`<button class="btn sm ghost" data-act="removerMembro" data-id="${m.usuario_id}">Remover</button>`:''}</div></div>`).join('')}</div>`) : '';
+  return `
+  <section class="panel"><h3>Minha conta</h3>
+    <p class="small muted" style="margin:0 0 14px">${esc(S.perfil?.nome||'')} · ${esc(S.user?.email||'')}</p>
+    <div class="actions"><button class="btn" data-act="editarNome">Alterar nome</button><button class="btn" data-act="trocarSenha">Alterar senha</button><button class="btn" data-act="sair">Sair deste aparelho</button></div></section>
+  <section class="panel"><div class="section-head"><h3 style="margin:0">Espaços</h3><div class="right"><button class="btn sm" data-act="entrarEspaco">Entrar com código</button><button class="btn sm primary" data-act="criarEspaco">${icon(I.plus)}Criar espaço compartilhado</button></div></div>
+    <p class="small muted" style="margin:0 0 12px">Seu espaço pessoal é só seu. Em um espaço compartilhado, todos os membros veem e lançam os mesmos dados. Você está em: <b>${esc(e?.nome||'')}</b>.</p>
+    ${comp?`<div class="panel" style="background:var(--surface);border:0">
+      ${dono?`<p class="small" style="margin:0 0 8px">Código de convite deste espaço. Envie para quem deve participar; a pessoa cria a conta dela e usa “Entrar com código”.</p>
+      <div class="actions" style="align-items:center"><span class="code" id="codigo">${esc(e.codigoConvite||'')}</span><button class="btn sm" data-act="copiarCodigo">Copiar</button><button class="btn sm ghost" data-act="novoCodigo">Gerar novo código</button></div>`:''}
+      <h3 style="margin:16px 0 6px;font-size:15px">Membros</h3>${membros}
+      <div class="actions" style="margin-top:12px">${dono?`<button class="btn sm ghost" data-act="renomearEspaco">Renomear espaço</button><button class="btn sm danger" data-act="excluirEspaco">Excluir espaço</button>`:`<button class="btn sm danger" data-act="sairEspaco">Sair deste espaço</button>`}</div></div>`:''}
+  </section>
+  <section class="panel"><h3>Saldo inicial</h3>
+    <p class="small muted" style="margin:0 0 14px">Informe quanto havia em conta no início de uma data. A partir dela, o saldo disponível soma os recebimentos e subtrai os pagamentos registrados.</p>
+    <form class="form-grid" data-form="saldo" style="max-width:520px">
+      <div class="field"><label for="sVal">Saldo em conta (R$)</label><input id="sVal" name="valor" inputmode="decimal" required value="${fmtInput(c.saldoInicial)}" placeholder="0,00"></div>
+      <div class="field"><label for="sData">No início do dia</label><input id="sData" name="data" type="date" required value="${c.dataSaldo||hoje()}"></div>
+      <div class="full actions"><button class="btn primary" type="submit">Salvar saldo</button></div></form></section>
+  <section class="panel"><div class="section-head"><h3 style="margin:0">Categorias de despesa</h3><div class="right"><button class="btn sm primary" data-act="novaCat">${icon(I.plus)}Nova categoria</button></div></div>
+    ${S.cats.length?`<div class="list">${S.cats.map(k=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(k.nome)}</div><div class="meta">${k.alimentacao?'<span class="pill paga">Conta como alimentação</span>':''}<span>${S.desp.filter(d=>d.categoria===k.id).length} lançamentos</span></div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editCat" data-id="${k.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delCat" data-id="${k.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<div class="empty"><strong>Nenhuma categoria</strong>Crie categorias como Moradia, Transporte e Supermercado.</div>`}</section>
+  <section class="panel"><h3>Contas fixas recorrentes</h3>
+    <p class="small muted" style="margin:0 0 10px">Modelos usados para lançar as contas fixas de cada mês. Alterações valem para os próximos lançamentos.</p>
+    ${S.recor.length?`<div class="list">${S.recor.map(t=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(t.descricao)}</div><div class="meta"><span>${esc(catNome(t.categoria))}</span><span>todo dia ${t.dia}</span>${pillP(t.periodo)}${t.ativo===false?'<span class="pill cancelada">Pausada</span>':''}</div></div><div class="v">${money(t.valor)}</div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editRecor" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delRecor" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<p class="small muted">Nenhuma conta recorrente. Marque “Repete todo mês” ao cadastrar uma despesa fixa.</p>`}</section>
+  <section class="panel"><h3>Seus dados</h3>
+    <p class="small muted" style="margin:0 0 14px">Espaço “${esc(e?.nome||'')}”: ${S.rec.length} receitas, ${S.desp.length} despesas, ${S.cats.length} categorias.</p>
+    <div class="actions"><button class="btn" data-act="exportar">${icon(I.down)}Exportar dados do espaço (JSON)</button>${dono?`<button class="btn danger" data-act="apagarTudo">Excluir todos os dados do espaço</button>`:''}<button class="btn danger" data-act="excluirConta">Excluir minha conta</button></div></section>`;
+}
+
+const ROADMAP = {
+  alimentacao:{e:5,t:'Seu perfil alimentar e o catálogo de ingredientes',l:['Questionário inicial: rotina, horários, preferências, restrições, equipamentos, tempo para cozinhar e orçamento','Catálogo por categorias com unidade, informação nutricional, preço de referência e preço pago','Seleção livre de alimentos, com sugestões que respeitam o seu perfil','Sem diagnóstico de saúde: as sugestões não substituem um nutricionista']},
+  cardapios:{e:6,t:'Cardápios e plano de produção das marmitas',l:['Cardápio diário, semanal e mensal montado com as suas escolhas','Quantidade de porções, ingredientes, ordem e tempo de preparo','Divisão entre geladeira e freezer seguindo boas práticas de conservação','Comparação de cenários: custo por porção e economia de cada opção']},
+  compras:{e:8,t:'Lista de compras gerada a partir do cardápio',l:['Quantidades necessárias convertidas em embalagens comerciais','Desconto automático do que já existe na despensa','Custo estimado com preços pesquisados em Cuiabá e o seu histórico','Ao finalizar, os comprovantes comparam o estimado com o pago']},
+  despensa:{e:8,t:'Despensa e estoque doméstico',l:['Entrada por registro manual, comprovante confirmado ou lista de compras','Baixa de estoque apenas com a sua confirmação de uso','Produtos próximos do vencimento e receitas para aproveitá-los']},
+  metas:{e:10,t:'Metas mensuráveis com acompanhamento mensal',l:['Reduzir marmitas prontas, criar reserva, quitar dívidas, reduzir crédito','Valor-alvo, prazo e evolução mês a mês calculada com seus lançamentos','Histórico para enxergar o progresso ao longo do ano']}
+};
+function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
+  return `<div class="roadmap"><span class="eyebrow">Etapa ${r.e} do plano</span><h2>${r.t}</h2><ul>${r.l.map(x=>`<li>${x}</li>`).join('')}</ul><p class="note" style="margin:0">Este módulo usa o mesmo banco de dados do Financeiro. Quando for ativado, as compras de alimentação já registradas nas categorias marcadas como alimentação entram no histórico.</p></div>`; }
+
+/* ---------- modais ---------- */
+let modalSubmit=null;
+function abrirModal(html,onSubmit,afterMount){ $('#sheet').innerHTML=html; $('#modal').hidden=false; modalSubmit=onSubmit; afterMount&&afterMount($('#sheet')); setTimeout(()=>{ const f=$('#sheet').querySelector('input:not([type=hidden]):not([type=checkbox]),select,textarea'); f&&f.focus(); },30); }
+function fecharModal(){ $('#modal').hidden=true; $('#sheet').innerHTML=''; modalSubmit=null; }
+function toast(t){ const el=$('#toast'); el.textContent=t; el.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>el.hidden=true,3600); }
+const head = t => `<header><h2>${t}</h2><button type="button" class="icon-btn" data-act="fechar" aria-label="Fechar">${icon('M6 6l12 12M18 6 6 18')}</button></header>`;
+const opts = (arr,sel) => arr.map(([v,t])=>`<option value="${esc(v)}" ${String(sel??'')===String(v)?'selected':''}>${esc(t)}</option>`).join('');
+const rodape = (txt,cls='primary') => `<p class="err" id="formErr"></p><footer><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn ${cls}" type="submit">${txt}</button></footer>`;
+function confirmar(titulo,texto,botoes){
+  abrirModal(`<div>${head(titulo)}</div><p style="margin:0">${texto}</p><footer><button type="button" class="btn" data-act="fechar">${botoes.length?'Cancelar':'Entendi'}</button>${botoes.map((b,i)=>`<button type="button" class="btn ${b.cls??'danger'}" data-act="conf" data-i="${i}">${b.t}</button>`).join('')}</footer>`,null);
+  confirmar.cb=botoes.map(b=>b.fn);
+}
+
+function formDespesa(d){
+  const novo=!d; d=d||{situacao:'pendente',comportamento:'variavel',periodo:'',dataCompra:hoje(),vencimento:S.mes===hoje().slice(0,7)?hoje():S.mes+'-10'};
+  const g=(+d.parcelas||1)>1;
+  return `<form data-form="despesa" data-id="${d.id||''}">${head(novo?'Nova despesa':'Editar despesa')}
+  ${novo?`<div class="seg"><button type="button" aria-pressed="true">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button></div>`:''}
+  <div class="form-grid">
+    <div class="field full"><label for="dDesc">Descrição</label><input id="dDesc" name="descricao" required maxlength="120" value="${esc(d.descricao)}" placeholder="Ex.: Aluguel, Supermercado, Internet"></div>
+    <div class="field"><label for="dValor" id="dValorLbl">Valor${g?' da parcela':''} (R$)</label><input id="dValor" name="valor" inputmode="decimal" required value="${fmtInput(d.valor)}" placeholder="0,00"></div>
+    <div class="field"><label for="dCat">Categoria</label><select id="dCat" name="categoria" required><option value="">Selecione</option>${opts(S.cats.map(c=>[c.id,c.nome]),d.categoria)}</select></div>
+    <div class="field"><label for="dSub">Subcategoria</label><input id="dSub" name="subcategoria" maxlength="60" value="${esc(d.subcategoria)}" placeholder="Opcional"></div>
+    <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
+    <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['fixa','Fixa'],['variavel','Variável']],d.comportamento)}</select></div>
+    <div class="field"><label for="dPer">Pagar com o recebimento</label><select id="dPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
+    <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
+    <div class="field"><label for="dVenc">${novo?'Vencimento (1ª parcela)':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
+    <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['prevista','Prevista'],['pendente','Pendente'],['paga','Paga'],['cancelada','Cancelada']],d.situacao)}</select></div>
+    <div class="field" data-show="paga"><label for="dPag">Data do pagamento</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
+    ${novo?`<div class="field"><label for="dParc">Número de parcelas</label><input id="dParc" name="parcelas" type="number" min="1" max="72" value="1"></div>
+    <div class="field" data-show="parc"><label for="dModo">O valor informado é</label><select id="dModo" name="modoValor">${opts([['total','O total da compra'],['parcela','O valor de cada parcela']],'total')}</select></div>
+    <label class="check full" data-show="rec"><input type="checkbox" name="recorrente"> Repete todo mês (cria um modelo de conta fixa)</label>`
+    :(g?`<p class="note full">Parcela ${d.parcelaAtual} de ${d.parcelas} · compra total de ${money(d.valorTotal)}. A alteração vale só para esta parcela.</p>`:'')}
+    <div class="field full"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
+  </div>${rodape(novo?'Salvar despesa':'Salvar alterações')}</form>`;
+}
+function wireDespesa(root){
+  const f=root.querySelector('form'), sit=f.elements.situacao, parc=f.elements.parcelas;
+  const sync=()=>{ root.querySelectorAll('[data-show="paga"]').forEach(el=>el.hidden=sit.value!=='paga');
+    if(parc){ const n=+parc.value||1; root.querySelector('[data-show="parc"]').hidden=n<=1; root.querySelector('[data-show="rec"]').hidden=n>1;
+      $('#dValorLbl').textContent = n>1 ? (f.elements.modoValor.value==='total'?'Valor total da compra (R$)':'Valor de cada parcela (R$)') : 'Valor (R$)'; } };
+  f.addEventListener('input',sync); f.addEventListener('change',sync); sync();
+}
+async function salvarDespesa(f){
+  const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, valor=parseValor(fd.valor);
+  if(!fd.descricao.trim()) return 'Informe a descrição.';
+  if(!(valor>0)) return 'Informe um valor maior que zero, por exemplo 129,90.';
+  if(!fd.categoria) return 'Escolha uma categoria.';
+  if(!fd.vencimento) return 'Informe a data de vencimento.';
+  const agora=new Date().toISOString();
+  const base={descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim()};
+  if(id){ await atualizar('despesas',id,{...base,valor:r2(valor),vencimento:fd.vencimento,atualizadoEm:agora}); toast('Despesa atualizada.'); return; }
+  const n=Math.max(1,Math.min(72,parseInt(fd.parcelas)||1));
+  if(n>1){
+    const total = fd.modoValor==='parcela' ? r2(valor*n) : r2(valor);
+    const vp=r2(Math.floor(total/n*100)/100), ult=r2(total-vp*(n-1)), grupo='g'+uid();
+    const rows=[]; for(let i=0;i<n;i++) rows.push({...base,valor:i===n-1?ult:vp,valorTotal:total,parcelas:n,parcelaAtual:i+1,grupoParcela:grupo,vencimento:addMesData(fd.vencimento,i),situacao:i===0?base.situacao:'pendente',dataPagamento:i===0?base.dataPagamento:''});
+    await inserir('despesas',rows); toast(`${n} parcelas criadas. Só o valor de cada parcela entra em cada mês.`); return;
+  }
+  let recorrenciaId='';
+  if(fd.recorrente){ recorrenciaId=await inserir('recorrencias',{descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),ativo:true}); base.comportamento='fixa'; }
+  await inserir('despesas',{...base,valor:r2(valor),vencimento:fd.vencimento,parcelas:1,recorrenciaId});
+  toast('Despesa salva.');
+}
+function formReceita(r){
+  const novo=!r; r=r||{situacao:'prevista',origem:'Salário',dataPrevista:S.mes+'-10',periodo:''};
+  return `<form data-form="receita" data-id="${r.id||''}">${head(novo?'Nova receita':'Editar receita')}
+  ${novo?`<div class="seg"><button type="button" aria-pressed="false" data-act="novo" data-tipo="despesa">Despesa</button><button type="button" aria-pressed="true">Receita</button></div>`:''}
+  <div class="form-grid">
+    <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
+    <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
+    <div class="field"><label for="rPrev">Valor previsto (R$)</label><input id="rPrev" name="valorPrevisto" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}" placeholder="0,00"></div>
+    <div class="field"><label for="rData">Data prevista</label><input id="rData" name="dataPrevista" type="date" required value="${r.dataPrevista||''}"></div>
+    <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
+    <div class="field"><label for="rSit">Situação</label><select id="rSit" name="situacao">${opts([['prevista','Prevista'],['recebida','Recebida'],['cancelada','Cancelada']],r.situacao)}</select></div>
+    <div class="field" data-show="rec"><label for="rReal">Valor efetivamente recebido (R$)</label><input id="rReal" name="valorRecebido" inputmode="decimal" value="${fmtInput(r.valorRecebido)}" placeholder="0,00"></div>
+    <div class="field" data-show="rec"><label for="rEf">Data do recebimento</label><input id="rEf" name="dataEfetiva" type="date" value="${r.dataEfetiva||hoje()}"></div>
+    <div class="field full"><label for="rObs">Observações</label><textarea id="rObs" name="obs" rows="2" maxlength="500">${esc(r.obs)}</textarea></div>
+  </div>${rodape(novo?'Salvar receita':'Salvar alterações')}</form>`;
+}
+function wireReceita(root){ const f=root.querySelector('form'); const sync=()=>root.querySelectorAll('[data-show="rec"]').forEach(el=>el.hidden=f.elements.situacao.value!=='recebida'); f.addEventListener('change',sync); sync(); }
+async function salvarReceita(f){
+  const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, vp=parseValor(fd.valorPrevisto);
+  if(!fd.descricao.trim()) return 'Informe a descrição.';
+  if(!(vp>=0)) return 'Informe o valor previsto, por exemplo 3200,00.';
+  if(!fd.dataPrevista) return 'Informe a data prevista.';
+  let vr=null; if(fd.situacao==='recebida'){ vr=parseValor(fd.valorRecebido); if(isNaN(vr)) vr=vp; if(vr<0) return 'O valor recebido não pode ser negativo.'; }
+  const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
+  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim()};
+  if(id){ await atualizar('receitas',id,{...dados,atualizadoEm:new Date().toISOString()}); toast('Receita atualizada.'); }
+  else { await inserir('receitas',dados); toast('Receita salva.'); }
+}
+function abrirCat(c){
+  abrirModal(`<form data-form="quick">${head(c?'Editar categoria':'Nova categoria')}<div class="field"><label for="cN">Nome</label><input id="cN" name="nome" required maxlength="40" value="${esc(c?.nome)}"></div>
+    <label class="check"><input type="checkbox" name="alimentacao" ${c?.alimentacao?'checked':''}> Conta como gasto com alimentação</label>${rodape('Salvar')}</form>`,
+  async f=>{ const nome=f.elements.nome.value.trim(); if(!nome) return 'Informe o nome.'; if(S.cats.some(x=>x.nome.toLowerCase()===nome.toLowerCase()&&x.id!==c?.id)) return 'Já existe uma categoria com esse nome.';
+    if(c) await atualizar('categorias',c.id,{nome,alimentacao:f.elements.alimentacao.checked}); else await inserir('categorias',{nome,alimentacao:f.elements.alimentacao.checked,ordem:S.cats.length+1}); toast('Categoria salva.'); });
+}
+async function carregarMembros(){ const id=S.esp; try{ const d=chk(await sb.rpc('lista_membros',{e:id})); if(S.esp===id){ S.membros=d; schedule(); } }catch(e){ S.membros=[]; dbErr(e); } }
+function baixar(nome,texto){ const url=URL.createObjectURL(new Blob([texto],{type:'application/json'})); const a=document.createElement('a'); a.href=url; a.download=nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),2000); }
+
+/* ---------- ações ---------- */
+const acoes = {
+  ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
+  mes: el => { S.mes=addMes(S.mes,+el.dataset.n); render(); },
+  tab: el => { S.tab=el.dataset.v; render(); },
+  fechar: () => fecharModal(),
+  recarregarPagina: () => location.reload(),
+  auth: el => { S.auth=el.dataset.v; S.authMsg=''; render(); },
+  sair: async () => { await sb.auth.signOut(); },
+  novo: el => { if(el.dataset.tipo==='receita') abrirModal(formReceita(),salvarReceita,wireReceita);
+    else { if(!S.cats.length){ fecharModal(); toast('Crie ao menos uma categoria em Configurações.'); S.view='config'; render(); return; } abrirModal(formDespesa(),salvarDespesa,wireDespesa); } },
+  editar: el => { const col=el.dataset.col, id=el.dataset.id;
+    if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(d) abrirModal(formDespesa(d),salvarDespesa,wireDespesa); }
+    else { const r=S.rec.find(x=>x.id===id); if(r) abrirModal(formReceita(r),salvarReceita,wireReceita); } },
+  pagar: el => { const d=S.desp.find(x=>x.id===el.dataset.id); if(!d) return;
+    abrirModal(`<form data-form="quick">${head('Marcar como paga')}<p class="muted" style="margin:0">${esc(d.descricao)} · vence ${dataBR(d.vencimento)}</p><div class="form-grid"><div class="field"><label for="qV">Valor pago (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(d.valor)}"></div><div class="field"><label for="qD">Data do pagamento</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar pagamento','sage')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o valor pago.'; await atualizar('despesas',d.id,{situacao:'paga',valor:r2(v),dataPagamento:f.elements.d.value}); toast('Pagamento registrado.'); }); },
+  receber: el => { const r=S.rec.find(x=>x.id===el.dataset.id); if(!r) return;
+    abrirModal(`<form data-form="quick">${head('Registrar recebimento')}<p class="muted" style="margin:0">${esc(r.descricao)} · previsto ${money(r.valorPrevisto)} em ${dataBR(r.dataPrevista)}</p><div class="form-grid"><div class="field"><label for="qV">Valor recebido (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}"></div><div class="field"><label for="qD">Data do recebimento</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar recebimento','sage')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>=0)) return 'Informe o valor recebido.'; await atualizar('receitas',r.id,{situacao:'recebida',valorRecebido:r2(v),dataEfetiva:f.elements.d.value}); toast('Recebimento registrado.'); }); },
+  periodo: el => atualizar('despesas',el.dataset.id,{periodo:el.dataset.p}),
+  periodoR: el => atualizar('receitas',el.dataset.id,{periodo:el.dataset.p}),
+  excluir: el => { const col=el.dataset.col, id=el.dataset.id;
+    if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(!d) return;
+      if(d.grupoParcela){ const prox=S.desp.filter(x=>x.grupoParcela===d.grupoParcela&&(+x.parcelaAtual)>=(+d.parcelaAtual));
+        confirmar('Excluir parcela',`${esc(d.descricao)} é a parcela ${d.parcelaAtual} de ${d.parcelas}. O que deseja excluir?`,[
+          {t:'Só esta parcela',cls:'',fn:async()=>{ await remover('despesas',id); toast('Parcela excluída.'); }},
+          {t:`Esta e as próximas (${prox.length})`,fn:async()=>{ await remover('despesas',prox.map(x=>x.id)); toast(`${prox.length} parcelas excluídas.`); }}]);
+      } else confirmar('Excluir despesa',`Excluir “${esc(d.descricao)}” (${money(d.valor)})? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('despesas',id); toast('Despesa excluída.'); }}]);
+    } else { const r=S.rec.find(x=>x.id===id); if(!r) return; confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); toast('Receita excluída.'); }}]); } },
+  conf: async el => { const fn=confirmar.cb?.[+el.dataset.i]; if(!fn) return; el.disabled=true; try{ await fn(); fecharModal(); }catch(e){ dbErr(e); el.disabled=false; } },
+  gerarRecorrentes: async el => { el.disabled=true; const ym=S.mes, faltam=recorrentesFaltando(ym); const [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
+    try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id})));
+      toast(`${faltam.length} ${faltam.length>1?'contas fixas lançadas':'conta fixa lançada'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
+  copiarOrc: async () => { await salvarOrc(S.mes,{...orcamentoMes(addMes(S.mes,-1))}); toast('Orçamento copiado do mês anterior.'); },
+  novaCat: () => abrirCat(),
+  editCat: el => abrirCat(S.cats.find(c=>c.id===el.dataset.id)),
+  delCat: el => { const c=S.cats.find(x=>x.id===el.dataset.id); if(!c) return; const n=S.desp.filter(d=>d.categoria===c.id).length;
+    if(n){ confirmar('Categoria em uso',`“${esc(c.nome)}” tem ${n} lançamentos. Para excluí-la, mova esses lançamentos para outra categoria editando cada um, ou mantenha a categoria.`,[]); return; }
+    confirmar('Excluir categoria',`Excluir a categoria “${esc(c.nome)}”?`,[{t:'Excluir',fn:async()=>{ await remover('categorias',c.id); toast('Categoria excluída.'); }}]); },
+  editRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return;
+    abrirModal(`<form data-form="quick">${head('Conta fixa recorrente')}<div class="form-grid">
+      <div class="field full"><label for="tD">Descrição</label><input id="tD" name="descricao" required value="${esc(t.descricao)}"></div>
+      <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
+      <div class="field"><label for="tDia">Dia do vencimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
+      <div class="field"><label for="tC">Categoria</label><select id="tC" name="categoria">${opts(S.cats.map(c=>[c.id,c.nome]),t.categoria)}</select></div>
+      <div class="field"><label for="tP">Pagar com o recebimento</label><select id="tP" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
+      <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (gera lançamento todo mês)</label></div>
+      <p class="note">Contas já lançadas não mudam. Para corrigir um mês específico, edite o lançamento no Financeiro.</p>${rodape('Salvar')}</form>`,
+    async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
+      await atualizar('recorrencias',t.id,{descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked}); toast('Conta recorrente atualizada.'); }); },
+  delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; confirmar('Excluir conta recorrente',`Excluir o modelo “${esc(t.descricao)}”? Os lançamentos já feitos continuam no Financeiro.`,[{t:'Excluir modelo',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
+  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc)};
+    baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
+  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
+    async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR') return 'Digite EXCLUIR em maiúsculas para confirmar.';
+      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) chk(await sb.from(t).delete().eq('espaco_id',S.esp));
+      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); toast('Dados do espaço excluídos.'); }),
+  excluirConta: () => abrirModal(`<form data-form="quick">${head('Excluir minha conta')}<p style="margin:0">Sua conta, seu espaço pessoal e os espaços compartilhados que você criou serão apagados de forma definitiva. Espaços criados por outras pessoas continuam existindo para elas. Exporte seus dados antes.</p><div class="field"><label for="qX">Digite EXCLUIR MINHA CONTA para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir conta','danger')}</form>`,
+    async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR MINHA CONTA') return 'Digite EXCLUIR MINHA CONTA em maiúsculas para confirmar.'; chk(await sb.rpc('excluir_minha_conta')); await sb.auth.signOut(); }),
+  editarNome: () => abrirModal(`<form data-form="quick">${head('Alterar nome')}<div class="field"><label for="qN">Nome</label><input id="qN" name="n" required maxlength="60" value="${esc(S.perfil?.nome)}"></div>${rodape('Salvar')}</form>`,
+    async f=>{ const n=f.elements.n.value.trim(); if(!n) return 'Informe o nome.'; chk(await sb.from('perfis').upsert({id:S.user.id,nome:n})); S.perfil={...S.perfil,nome:n}; toast('Nome atualizado.'); render(); }),
+  trocarSenha: () => abrirModal(`<form data-form="quick">${head('Alterar senha')}<div class="form-grid"><div class="field"><label for="qS1">Nova senha</label><input id="qS1" name="s1" type="password" autocomplete="new-password" minlength="8" required></div><div class="field"><label for="qS2">Repita a nova senha</label><input id="qS2" name="s2" type="password" autocomplete="new-password" minlength="8" required></div></div>${rodape('Alterar senha')}</form>`,
+    async f=>{ if(f.elements.s1.value.length<8) return 'Use pelo menos 8 caracteres.'; if(f.elements.s1.value!==f.elements.s2.value) return 'As duas senhas não são iguais.'; chk(await sb.auth.updateUser({password:f.elements.s1.value})); toast('Senha alterada.'); }),
+  criarEspaco: () => abrirModal(`<form data-form="quick">${head('Criar espaço compartilhado')}<p class="muted" style="margin:0">Use para finanças da casa ou da família. Ele começa com as categorias padrão e você recebe um código para convidar outras pessoas.</p><div class="field"><label for="qN">Nome do espaço</label><input id="qN" name="n" required maxlength="60" placeholder="Ex.: Casa"></div>${rodape('Criar espaço')}</form>`,
+    async f=>{ const n=f.elements.n.value.trim(); if(!n) return 'Informe o nome.'; const id=chk(await sb.rpc('criar_espaco',{nome_espaco:n})); await carregarEspacos(); fecharModal(); await abrirEspaco(id); S.view='config'; render(); toast('Espaço criado. Copie o código de convite para chamar outras pessoas.'); }),
+  entrarEspaco: () => abrirModal(`<form data-form="quick">${head('Entrar em um espaço')}<p class="muted" style="margin:0">Peça o código de convite para quem criou o espaço.</p><div class="field"><label for="qC">Código de convite</label><input id="qC" name="c" required maxlength="20" autocomplete="off" style="text-transform:uppercase;letter-spacing:.1em"></div>${rodape('Entrar')}</form>`,
+    async f=>{ const id=chk(await sb.rpc('entrar_no_espaco',{codigo:f.elements.c.value})); await carregarEspacos(); fecharModal(); await abrirEspaco(id); toast('Você entrou no espaço.'); }),
+  copiarCodigo: async () => { const c=espAtual()?.codigoConvite||''; try{ await navigator.clipboard.writeText(c); toast('Código copiado.'); }catch(_){ const r=document.createRange(); r.selectNodeContents($('#codigo')); const s=getSelection(); s.removeAllRanges(); s.addRange(r); toast('Código selecionado. Copie com o menu do aparelho.'); } },
+  novoCodigo: () => confirmar('Gerar novo código','O código atual deixa de funcionar. Quem já é membro continua no espaço.',[{t:'Gerar novo código',cls:'primary',fn:async()=>{ chk(await sb.rpc('novo_codigo_convite',{e:S.esp})); await carregarEspacos(); render(); toast('Novo código gerado.'); }}]),
+  renomearEspaco: () => abrirModal(`<form data-form="quick">${head('Renomear espaço')}<div class="field"><label for="qN">Nome</label><input id="qN" name="n" required maxlength="60" value="${esc(espAtual()?.nome)}"></div>${rodape('Salvar')}</form>`,
+    async f=>{ const n=f.elements.n.value.trim(); if(!n) return 'Informe o nome.'; chk(await sb.from('espacos').update({nome:n}).eq('id',S.esp)); await carregarEspacos(); render(); toast('Espaço renomeado.'); }),
+  removerMembro: el => { const m=(S.membros||[]).find(x=>x.usuario_id===el.dataset.id); if(!m) return; confirmar('Remover membro',`Remover ${esc(m.nome||m.email)} do espaço? A pessoa perde o acesso aos dados deste espaço.`,[{t:'Remover',fn:async()=>{ chk(await sb.from('membros').delete().eq('espaco_id',S.esp).eq('usuario_id',m.usuario_id)); S.membros=null; render(); toast('Membro removido.'); }}]); },
+  sairEspaco: () => confirmar('Sair do espaço',`Sair de “${esc(espAtual()?.nome)}”? Você deixa de ver os dados dele. Para voltar, precisará de um novo código.`,[{t:'Sair do espaço',fn:async()=>{ chk(await sb.from('membros').delete().eq('espaco_id',S.esp).eq('usuario_id',S.user.id)); await carregarEspacos(); await abrirEspaco(S.espacos[0].id); toast('Você saiu do espaço.'); }}]),
+  excluirEspaco: () => abrirModal(`<form data-form="quick">${head('Excluir espaço')}<p style="margin:0">O espaço “${esc(espAtual()?.nome)}” e todos os dados dele serão apagados para todos os membros.</p><div class="field"><label for="qX">Digite o nome do espaço para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir espaço','danger')}</form>`,
+    async f=>{ if(f.elements.x.value.trim()!==espAtual()?.nome) return 'O nome digitado não confere.'; chk(await sb.from('espacos').delete().eq('id',S.esp)); await carregarEspacos(); fecharModal(); await abrirEspaco(S.espacos[0].id); toast('Espaço excluído.'); })
+};
+
+/* ---------- eventos ---------- */
+document.addEventListener('click', async e=>{
+  const el=e.target.closest('[data-act]'); if(!el) return;
+  const fn=acoes[el.dataset.act]; if(!fn) return;
+  try{ await fn(el); }catch(err){ dbErr(err); }
+});
+$('#modal').addEventListener('mousedown',e=>{ if(e.target.id==='modal') fecharModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#modal').hidden) fecharModal(); });
+document.addEventListener('submit', async e=>{
+  const f=e.target; e.preventDefault(); const tipo=f.dataset.form; const btn=f.querySelector('[type=submit]');
+  if(['login','cadastro','esqueci','novaSenha'].includes(tipo)){
+    const err=$('#authErr'); err.textContent=''; btn.disabled=true;
+    try{
+      if(tipo==='login'){ ls.set(LEMBRAR,f.elements.lembrar.checked?'1':'0'); chk(await sb.auth.signInWithPassword({email:f.elements.email.value.trim(),password:f.elements.senha.value})); }
+      else if(tipo==='cadastro'){
+        if(f.elements.senha.value.length<8) throw {message:'weak'}; if(f.elements.senha.value!==f.elements.senha2.value){ err.textContent='As duas senhas não são iguais.'; btn.disabled=false; return; }
+        const d=chk(await sb.auth.signUp({email:f.elements.email.value.trim(),password:f.elements.senha.value,options:{data:{nome:f.elements.nome.value.trim()},emailRedirectTo:location.origin}}));
+        if(!d.session){ S.auth='login'; S.authMsg=`Conta criada. Enviamos um link de confirmação para <b>${esc(f.elements.email.value.trim())}</b>. Abra o e-mail, confirme e depois entre aqui.`; render(); } }
+      else if(tipo==='esqueci'){ chk(await sb.auth.resetPasswordForEmail(f.elements.email.value.trim(),{redirectTo:location.origin})); S.authMsg='Se houver uma conta com esse e-mail, você receberá um link para criar uma nova senha em alguns minutos.'; render(); }
+      else if(tipo==='novaSenha'){ if(f.elements.senha.value.length<8) throw {message:'weak'}; if(f.elements.senha.value!==f.elements.senha2.value){ err.textContent='As duas senhas não são iguais.'; btn.disabled=false; return; }
+        chk(await sb.auth.updateUser({password:f.elements.senha.value})); toast('Nova senha salva.'); const {data}=await sb.auth.getSession(); if(data.session) entrar(data.session); }
+    }catch(x){ const el=$('#authErr'); if(el) el.textContent=erroAmigavel(x); }
+    const b2=f.querySelector('[type=submit]'); if(b2) b2.disabled=false; return;
+  }
+  if(tipo==='saldo'){ const v=parseValor(f.elements.valor.value); if(isNaN(v)){ toast('Informe o saldo, por exemplo 1250,00.'); return; }
+    try{ await salvarCfg({saldoInicial:r2(v),dataSaldo:f.elements.data.value}); toast('Saldo inicial salvo.'); }catch(x){ dbErr(x); } return; }
+  if(!modalSubmit) return;
+  btn.disabled=true;
+  try{ const erro=await modalSubmit(f); if(erro){ $('#formErr').textContent=erro; btn.disabled=false; return; } if(!$('#modal').hidden && $('#sheet').contains(f)) fecharModal(); }
+  catch(x){ const el=$('#formErr'); if(el) el.textContent=erroAmigavel(x); else dbErr(x); btn.disabled=false; }
+});
+document.addEventListener('change', async e=>{
+  const t=e.target;
+  if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
+  else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }
+  else if(t.dataset.orc){ const v=t.value.trim()===''?0:parseValor(t.value); if(isNaN(v)||v<0){ toast('Valor de orçamento inválido.'); return; }
+    const lim={...orcamentoMes(S.mes)}; if(v) lim[t.dataset.orc]=r2(v); else delete lim[t.dataset.orc];
+    try{ await salvarOrc(S.mes,lim); toast('Orçamento atualizado.'); }catch(x){ dbErr(x); } }
+});
+function fecharMenu(){ $('#side').classList.remove('open'); $('#scrim').hidden=true; }
+$('#menuBtn').addEventListener('click',()=>{ $('#side').classList.add('open'); $('#scrim').hidden=false; });
+$('#scrim').addEventListener('click',fecharMenu);
+$('#sairBtn').addEventListener('click',()=>acoes.sair().catch(dbErr));
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && S.fase==='pronto') Object.keys(TABELAS).forEach(recarregarDepois); });
+
+/* ---------- início ---------- */
+const vSalva=ls.get('meuEixo.view'); if(vSalva && NAV.some(n=>n.id===vSalva)) S.view=vSalva;
+if(!configurado){ render(); return; }
+let recuperando=false;
+sb.auth.onAuthStateChange((evento,session)=>{
+  if(evento==='PASSWORD_RECOVERY'){ recuperando=true; S.fase='auth'; S.auth='novaSenha'; render(); return; }
+  if(recuperando && evento!=='SIGNED_OUT') return;
+  if(evento==='SIGNED_OUT' || !session){ sairLocal(); return; }
+  if(evento==='TOKEN_REFRESHED' || evento==='USER_UPDATED'){ S.user=session.user; return; }
+  if(!S.user || S.user.id!==session.user.id) setTimeout(()=>entrar(session),0);
+});
+})();

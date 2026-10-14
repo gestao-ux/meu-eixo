@@ -94,16 +94,20 @@ main{min-width:0;display:flex;flex-direction:column}
 .alert.ok{background:var(--sage-soft)} .alert.ok .dot{background:var(--sage)}
 .alert p{margin:0} .alert .hint{color:var(--muted);font-size:13px;margin-top:2px}
 
-.list{display:flex;flex-direction:column}
-.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;align-items:center;padding:12px 4px;border-bottom:1px solid var(--line)}
+.list{display:flex;flex-direction:column;container-type:inline-size;min-width:0}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;align-items:start;padding:14px 4px;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
-.row .t{font-weight:600;font-size:14.5px;overflow-wrap:anywhere}
-.row .meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12.5px;color:var(--muted)}
-.row .v{font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
-.row .ops{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap}
-@media (min-width:760px){
-  .row{grid-template-columns:minmax(0,1fr) 120px auto}
-  .row .ops{grid-column:auto;justify-content:flex-end}
+.row > div:first-child{min-width:0}
+.row .t{font-weight:600;font-size:14.5px;line-height:1.35;overflow-wrap:break-word;word-break:normal;hyphens:auto}
+.row .meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12.5px;color:var(--muted);margin-top:4px}
+.row .meta > span{white-space:nowrap}
+.row .v{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;white-space:nowrap}
+.row .v .small{font-weight:400;white-space:nowrap}
+.row .ops{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* A linha só fica em três colunas quando o próprio bloco é largo (não depende da tela) */
+@container (min-width:720px){
+  .row{grid-template-columns:minmax(0,1fr) 130px auto;align-items:center}
+  .row .ops{grid-column:auto;justify-content:flex-end;max-width:360px}
 }
 .pill{display:inline-flex;align-items:center;padding:1px 8px;border-radius:99px;font-size:11.5px;font-weight:600;background:var(--surface);color:var(--muted);white-space:nowrap}
 .pill.paga,.pill.recebida{background:var(--sage-soft);color:var(--sage)}
@@ -125,7 +129,8 @@ main{min-width:0;display:flex;flex-direction:column}
 .period header .day{font-family:var(--f-display);font-size:34px;line-height:1;color:var(--blue)}
 .period.unassigned header .day{color:var(--muted)}
 .period .figs{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;padding:14px 18px;background:var(--surface);font-size:13px}
-.period .figs b{display:block;font-size:16px;font-variant-numeric:tabular-nums}
+.period .figs b{display:block;font-size:16px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.period .figs > div{min-width:0}
 .period .body{padding:6px 14px 10px}
 .period footer{margin-top:auto;padding:14px 18px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .period footer .big{font-family:var(--f-display);font-size:24px;font-variant-numeric:tabular-nums}

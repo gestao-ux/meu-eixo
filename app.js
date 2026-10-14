@@ -273,8 +273,9 @@ function rowDesp(d,o={}){
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
-  const restante = grupo ? `<div class="small muted">faltam ${Math.max(0,(+d.parcelas)-(+d.parcelaAtual))} depois desta</div>` : '';
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}${restante}</div><div class="ops">${ops.join('')}</div></div>`;
+  const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
+  const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];

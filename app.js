@@ -42,7 +42,7 @@ const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPA
 
 const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
 const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
-const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash']);
+const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
 function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
 function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
 const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
@@ -60,7 +60,7 @@ const NAV = [
   {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01'},
   {id:'despensa',t:'Despensa e estoque',ic:'M4 4h16v6H4zM4 10h16v10H4zM10 14h4',soon:8},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
-  {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01',soon:10},
+  {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01'},
   {id:'config',t:'Configurações',ic:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z'}
 ];
 const ORIGENS = ['Salário','Comissões','Renda extra','Reembolso','Outra'];
@@ -127,6 +127,7 @@ function alertas(ym){
   const sd=saldoDisponivel();
   if(sd!==null && ym===h.slice(0,7)){ const pr=proximoRecebimento(); const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
     const prev=r2(sd-sum(ate,d=>d.valor)); if(prev<0) a.push({k:'danger',t:`O saldo previsto até ${dataCurta(pr)} fica negativo (${money(prev)}).`,h:'As contas que vencem antes do próximo recebimento superam o saldo em conta.'}); }
+  a.push(...alertasMetas(ym));
   const rm=recorrentesFaltando(ym);
   if(rm.length) a.push({k:'',t:`${rm.length} ${rm.length>1?'contas fixas ainda não foram lançadas':'conta fixa ainda não foi lançada'} em ${mesLabel(ym)}.`,h:'Use “Lançar contas fixas” no Planejamento para gerar esses compromissos.'});
   return a;
@@ -142,6 +143,7 @@ function erroAmigavel(e){
   if(m.includes('rate limit')||m.includes('too many')) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
   if(m.includes('código de convite')) return 'Código de convite não encontrado. Confira as letras e números.';
   if(/(conferido|favorecido)/.test(m) && /column|coluna|schema cache/.test(m)) return 'Falta executar a atualização 006_lancamento_rapido.sql no Supabase (SQL Editor).';
+  if(/(divida_id|dividas|\bmetas\b)/.test(m) && /column|coluna|relation|schema cache|does not exist/.test(m)) return 'Falta executar a atualização 007_dividas_metas.sql no Supabase (SQL Editor).';
   if(/(compras|precos|compra_itens)/.test(m) && /relation|schema cache|does not exist/.test(m)) return 'Falta executar a atualização 005_compras_precos.sql no Supabase (SQL Editor).';
   if(m.includes('failed to fetch')||m.includes('network')) return 'Sem conexão com o servidor. Verifique a internet e tente de novo.';
   return e?.message || 'Algo não saiu como esperado. Tente novamente.';
@@ -188,7 +190,8 @@ async function abrirEspaco(id){
   S.canal.on('postgres_changes',{event:'*',schema:'public',table:'listas_compra',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
   for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
   S.canal.subscribe();
-  S.planos=undefined; carregarAlimentacaoEspaco(); carregarComprasPrecos();
+  for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
+  S.planos=undefined; carregarAlimentacaoEspaco(); carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas();
   S.fase='pronto'; render();
 }
 async function entrar(session){
@@ -201,7 +204,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -227,7 +230,7 @@ function render(){
   const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
   $('#monthNav').hidden = S.view==='config' || S.view==='alimentacao';
   document.querySelector('.fab').hidden = ['alimentacao','cardapios','compras'].includes(S.view);
-  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao,cardapios:vCardapios,compras:vCompras};
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao,cardapios:vCardapios,compras:vCompras,metas:vMetas};
   v.innerHTML = (views[S.view]||vRoadmap)();
   ls.set('meuEixo.view',S.view);
   if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
@@ -464,8 +467,7 @@ const ROADMAP = {
   alimentacao:{e:5,t:'Seu perfil alimentar e o catálogo de ingredientes',l:['Questionário inicial: rotina, horários, preferências, restrições, equipamentos, tempo para cozinhar e orçamento','Catálogo por categorias com unidade, informação nutricional, preço de referência e preço pago','Seleção livre de alimentos, com sugestões que respeitam o seu perfil','Sem diagnóstico de saúde: as sugestões não substituem um nutricionista']},
   cardapios:{e:6,t:'Cardápios e plano de produção das marmitas',l:['Cardápio diário, semanal e mensal montado com as suas escolhas','Quantidade de porções, ingredientes, ordem e tempo de preparo','Divisão entre geladeira e freezer seguindo boas práticas de conservação','Comparação de cenários: custo por porção e economia de cada opção']},
   compras:{e:8,t:'Lista de compras gerada a partir do cardápio',l:['Quantidades necessárias convertidas em embalagens comerciais','Desconto automático do que já existe na despensa','Custo estimado com preços pesquisados em Cuiabá e o seu histórico','Ao finalizar, os comprovantes comparam o estimado com o pago']},
-  despensa:{e:8,t:'Despensa e estoque doméstico',l:['Entrada por registro manual, comprovante confirmado ou lista de compras','Baixa de estoque apenas com a sua confirmação de uso','Produtos próximos do vencimento e receitas para aproveitá-los']},
-  metas:{e:10,t:'Metas mensuráveis com acompanhamento mensal',l:['Reduzir marmitas prontas, criar reserva, quitar dívidas, reduzir crédito','Valor-alvo, prazo e evolução mês a mês calculada com seus lançamentos','Histórico para enxergar o progresso ao longo do ano']}
+  despensa:{e:8,t:'Despensa e estoque doméstico',l:['Entrada por registro manual, comprovante confirmado ou lista de compras','Baixa de estoque apenas com a sua confirmação de uso','Produtos próximos do vencimento e receitas para aproveitá-los']}
 };
 function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
   return `<div class="roadmap"><span class="eyebrow">Etapa ${r.e} do plano</span><h2>${r.t}</h2><ul>${r.l.map(x=>`<li>${x}</li>`).join('')}</ul><p class="note" style="margin:0">Este módulo usa o mesmo banco de dados do Financeiro. Quando for ativado, as compras de alimentação já registradas nas categorias marcadas como alimentação entram no histórico.</p></div>`; }
@@ -740,6 +742,329 @@ function abrirCat(c){
 async function carregarMembros(){ const id=S.esp; try{ const d=chk(await sb.rpc('lista_membros',{e:id})); if(S.esp===id){ S.membros=d; schedule(); } }catch(e){ S.membros=[]; dbErr(e); } }
 function baixar(nome,texto){ const url=URL.createObjectURL(new Blob([texto],{type:'application/json'})); const a=document.createElement('a'); a.href=url; a.download=nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),2000); }
 
+/* ---------- metas: dívidas, plano de quitação e crédito (Etapa 10) ---------- */
+const MT = () => window.MeuEixoMetas;
+const TIPOS_DIV = {cartao:'Cartão de crédito (fatura ou rotativo)',cheque_especial:'Cheque especial',emprestimo:'Empréstimo pessoal',consignado:'Consignado',financiamento:'Financiamento',acordo:'Acordo ou renegociação',pessoa:'Dívida com pessoa',outra:'Outra dívida'};
+const TIPOS_DIV_CURTO = {cartao:'Cartão',cheque_especial:'Cheque especial',emprestimo:'Empréstimo',consignado:'Consignado',financiamento:'Financiamento',acordo:'Acordo',pessoa:'Pessoa',outra:'Outra'};
+const ESTRATEGIAS = {avalanche:{t:'Maior juros primeiro',d:'Paga menos juros no total. É a forma mais barata de sair das dívidas.'},bola:{t:'Menor saldo primeiro',d:'Quita uma dívida mais cedo e libera a parcela dela para a próxima. Ajuda a manter o ritmo.'}};
+const curto = v => v>=1000 ? 'R$ '+(Math.round(v/100)/10).toLocaleString('pt-BR')+' mil' : 'R$ '+Math.round(v);
+const pct = v => (Math.round(v*10)/10).toFixed(1).replace('.',',')+'%';
+const ultimoDia = ym => ym+'-'+String(diasNoMes(ym)).padStart(2,'0');
+
+async function carregarMetas(){
+  const id=S.esp;
+  try{
+    const d=chk(await sb.from('dividas').select('*').eq('espaco_id',id).order('criado_em'));
+    const m=chk(await sb.from('metas').select('*').eq('espaco_id',id).order('criado_em'));
+    if(S.esp!==id) return; S.dividas=d.map(fromDb); S.metas=m.map(fromDb); S.metasErro=false;
+  }catch(e){ console.error(e); S.dividas=[]; S.metas=[]; S.metasErro=true; }
+  schedule();
+}
+const metaDe = tipo => (S.metas||[]).find(m=>m.tipo===tipo && m.ativo!==false) || null;
+async function salvarMeta(tipo, patch){
+  const m=metaDe(tipo), agora=new Date().toISOString();
+  if(m) chk(await sb.from('metas').update(toDb({...patch,atualizadoEm:agora})).eq('id',m.id).eq('espaco_id',S.esp));
+  else chk(await sb.from('metas').insert({...toDb({tipo,inicio:hoje(),ativo:true,...patch}),espaco_id:S.esp}));
+  await carregarMetas();
+}
+async function gravarDivida(id, patch){
+  if(id) chk(await sb.from('dividas').update(toDb({...patch,atualizadoEm:new Date().toISOString()})).eq('id',id).eq('espaco_id',S.esp));
+  else chk(await sb.from('dividas').insert({...toDb(patch),espaco_id:S.esp}));
+  await carregarMetas();
+}
+
+/* pagamentos já registrados (despesas pagas ligadas à dívida) */
+const pagamentosDiv = id => S.desp.filter(d=>d.dividaId===id && ativa(d) && d.situacao==='paga').map(d=>({data:d.dataPagamento||d.vencimento,valor:+d.valor}));
+const saldoDiv = (dv, ate=hoje()) => MT().saldoEstimado(dv, pagamentosDiv(dv.id), ate);
+const dividasAtivas = () => (S.dividas||[]).filter(d=>!d.quitada);
+
+/* compras parceladas do Financeiro, agrupadas */
+function parcelamentos(){
+  const g={};
+  for(const d of S.desp){ if((+d.parcelas||1)<=1 || !ativa(d) || d.dividaId) continue;
+    const k=d.grupoParcela || ['x',d.descricao,d.parcelas,r2(d.valorTotal||0)].join('|'); (g[k]=g[k]||[]).push(d); }
+  return Object.entries(g).map(([k,arr])=>{
+    arr.sort((a,b)=>(+a.parcelaAtual||0)-(+b.parcelaAtual||0));
+    const ab=arr.filter(d=>d.situacao!=='paga'), agenda={};
+    for(const d of ab){ const m=compDesp(d); if(m) agenda[m]=r2((agenda[m]||0)+(+d.valor||0)); }
+    const meses=Object.keys(agenda).sort(), total=+arr[0].parcelas||arr.length;
+    return { id:k, nome:arr[0].descricao, credito:arr.some(d=>d.formaPagamento==='Crédito'), total, pagas:Math.max(0,total-ab.length),
+      restante:sum(ab,d=>d.valor), parcela:+(ab[0]||arr[0]).valor, proxima:ab[0]?.vencimento||null, fim:meses[meses.length-1]||null, agenda, linhas:arr };
+  }).filter(p=>p.restante>0).sort((a,b)=>(a.fim||'').localeCompare(b.fim||''));
+}
+
+/* entrada da simulação a partir dos dados do espaço */
+function entradaPlano(orcamento, estrategia){
+  const ini=hoje().slice(0,7);
+  const dividas=dividasAtivas().map(d=>({id:d.id,nome:d.nome,saldo:saldoDiv(d),jurosMes:+d.jurosMes||0,minimo:+d.parcela||0})).filter(d=>d.saldo>0);
+  const parc=parcelamentos().map(p=>{ const ag={}; for(const [m,v] of Object.entries(p.agenda)){ const mm=m<ini?ini:m; ag[mm]=r2((ag[mm]||0)+v); } return {id:p.id,nome:p.nome,agenda:ag}; });
+  return {inicio:ini, dividas, parcelamentos:parc, orcamento:orcamento??null, estrategia:estrategia||'avalanche'};
+}
+function analiseDividas(){
+  const meta=metaDe('quitar_dividas'), est=meta?.dados?.estrategia||'avalanche';
+  const e=entradaPlano(null,est), base=MT().simular(e), minimo=MT().minimoMensal(e);
+  const orc=meta?.valorAlvo!=null ? +meta.valorAlvo : null;
+  const plano = orc!=null ? MT().simular({...e,orcamento:orc}) : null;
+  const prazoYm = meta?.prazo ? meta.prazo.slice(0,7) : null;
+  const paraPrazo = prazoYm ? MT().valorParaPrazo(e,prazoYm) : null;
+  const totalCad=sum(e.dividas,d=>d.saldo), parcs=parcelamentos(), totalParc=sum(parcs,p=>p.restante);
+  const jurosMes=sum(e.dividas,d=>MT().jurosDoMes(d.saldo,d.jurosMes));
+  return {meta,est,e,base,plano,orc,minimo,prazoYm,paraPrazo,totalCad,totalParc,total:r2(totalCad+totalParc),parcs,jurosMes};
+}
+/* dívida total no fim de cada mês passado (com os lançamentos) */
+function evolucaoDividas(n=6){
+  const fim=hoje().slice(0,7), out=[];
+  for(let i=n-1;i>=0;i--){ const m=addMes(fim,-i), ate= i===0 ? hoje() : ultimoDia(m);
+    const parc=sum(S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && !d.dividaId && (d.dataCompra||(d.criadoEm||'').slice(0,10)||'0000')<=ate && (compDesp(d)>m || (compDesp(d)<=m && d.situacao!=='paga'))),d=>d.valor);
+    const cad=sum((S.dividas||[]).filter(d=>d.dataSaldo && d.dataSaldo<=ate && !(d.quitada && d.quitadaEm && d.quitadaEm<=ate)),d=>MT().saldoEstimado({...d,quitada:false},pagamentosDiv(d.id),ate));
+    out.push({mes:m,total:r2(parc+cad),parcial:(S.dividas||[]).some(d=>d.dataSaldo && d.dataSaldo>ate && !d.quitada)}); }
+  return out;
+}
+/* pagamentos mensais das dívidas cadastradas ainda não lançados no Financeiro */
+const pagamentosFaltando = ym => dividasAtivas().filter(d=>+d.parcela>0 && d.dia && (d.dataSaldo||'').slice(0,7)<=ym && !S.desp.some(x=>x.dividaId===d.id && ativa(x) && compDesp(x)===ym));
+
+/* cartão de crédito */
+const ehCredito = d => d.formaPagamento==='Crédito' && ativa(d);
+function analiseCredito(ym){
+  const meses=[]; for(let i=-5;i<=6;i++) meses.push(addMes(ym,i));
+  const porMes=meses.map(m=>{ const D=despMes(m).filter(ehCredito); return {mes:m,total:sum(D,d=>d.valor),parcelado:sum(D.filter(d=>(+d.parcelas||1)>1),d=>d.valor)}; });
+  const atual=porMes[5], teto=metaDe('limite_credito')?.valorAlvo!=null ? +metaDe('limite_credito').valorAlvo : null;
+  const anteriores=porMes.slice(2,5), media=anteriores.length?r2(anteriores.reduce((a,x)=>a+x.total,0)/anteriores.length):0;
+  const futuros=porMes.slice(6), comprometido=sum(futuros,x=>x.total), prox=porMes[6];
+  const D=despMes(ym).filter(ehCredito);
+  const porCat=S.cats.map(c=>({c,v:sum(D.filter(d=>d.categoria===c.id),d=>d.valor)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+  const semCat=sum(D.filter(d=>!d.categoria),d=>d.valor); if(semCat) porCat.push({c:{nome:'Sem categoria'},v:semCat});
+  const usados=porMes.slice(0,6).filter(x=>x.total>0), dentro=teto?usados.filter(x=>x.total<=teto).length:0;
+  return {porMes,atual,teto,media,comprometido,prox,porCat,dentro,usados:usados.length};
+}
+
+/* gráfico de colunas (sem bibliotecas) */
+function colunas(dados, o={}){
+  const max=Math.max(1,o.linha||0,...dados.map(d=>d.v));
+  return `<div class="cols${o.compacto?' compacto':''}" role="img" aria-label="${esc(o.rotulo||'Gráfico')}">
+    ${o.linha?`<div class="cols-area" aria-hidden="true"><div class="cols-linha" style="bottom:${(o.linha/max*100).toFixed(1)}%"><span>${esc(o.linhaRot||'')} ${money(o.linha)}</span></div></div>`:''}
+    ${dados.map(d=>`<div class="col ${d.cls||''}" title="${esc(d.titulo||'')}"><span class="col-v">${d.vRot??''}</span><div class="col-b"><i style="height:${Math.max(d.v>0?2:0,d.v/max*100).toFixed(1)}%"></i></div><span class="col-l">${esc(d.l)}</span></div>`).join('')}
+  </div>`;
+}
+
+function vMetas(){
+  if(S.metasErro) return `<div class="alert warn"><span class="dot"></span><div><p>Falta executar a atualização <b>007_dividas_metas.sql</b> no Supabase.</p><p class="hint">Abra o Supabase › SQL Editor › New query, cole o conteúdo do arquivo e clique em Run. Depois recarregue esta página.</p></div></div>`;
+  if(S.dividas===undefined) return `<div class="empty"><strong>Carregando metas</strong>Um instante…</div>`;
+  const tab=S.mtTab||'dividas';
+  return `<div class="tabs" role="tablist"><button role="tab" aria-selected="${tab==='dividas'}" data-act="mtTab" data-v="dividas">Quitar dívidas</button><button role="tab" aria-selected="${tab==='credito'}" data-act="mtTab" data-v="credito">Reduzir o crédito</button></div>
+  ${tab==='credito'?vMetaCredito():vMetaDividas()}`;
+}
+
+function vMetaDividas(){
+  const A=analiseDividas(), {base,plano,meta,est}=A, ym=hoje().slice(0,7), rs=resumo(ym);
+  const semNada=!A.e.dividas.length && !A.parcs.length;
+  const quitadas=(S.dividas||[]).filter(d=>d.quitada);
+  if(semNada) return `<div class="empty"><strong>Nenhuma dívida em aberto</strong>As compras parceladas do Financeiro aparecem aqui sozinhas. Cadastre também cartão no rotativo, cheque especial, empréstimos, acordos ou dívidas com pessoas para montar o plano de quitação.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novaDivida">${icon(I.plus)}Cadastrar dívida</button></div></div>
+    ${quitadas.length?blocoQuitadas(quitadas):''}`;
+  const compMes = r2(sum(despMes(ym).filter(d=>ativa(d)&&((+d.parcelas||1)>1||d.dividaId)),d=>d.valor) + sum(pagamentosFaltando(ym),d=>d.parcela));
+  const pctRenda = rs.recEsp>0 ? compMes/rs.recEsp*100 : null;
+  const ref = plano || base;
+  const fimTxt = ref.fim ? mesLabel(ref.fim) : 'sem data';
+  const evo=evolucaoDividas(6), ant=evo[evo.length-2]?.total, atualEvo=evo[evo.length-1]?.total;
+  const variacao = ant ? atualEvo-ant : null;
+  const falt=pagamentosFaltando(S.mes);
+  return `
+  ${falt.length?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(S.mes)}: ${falt.map(d=>esc(d.nome)).join(', ')}.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="lancarPagDiv">Lançar no Financeiro</button></div></div></div>`:''}
+  <section><div class="section-head"><h2>Situação das dívidas</h2><p>Hoje, com os lançamentos do Financeiro</p></div>
+    <div class="kpis">
+      <div class="kpi hero"><span class="lbl">Total devido</span><span class="val">${money(A.total)}</span><span class="sub">${money(A.totalCad)} em dívidas · ${money(A.totalParc)} em parcelas</span></div>
+      <div class="kpi"><span class="lbl">Comprometido em ${MESES[+ym.slice(5)-1]}</span><span class="val ${pctRenda!==null&&pctRenda>30?'neg':''}">${money(compMes)}</span><span class="sub">${pctRenda!==null?`${pct(pctRenda)} da receita prevista · referência prudente: até 30%`:'cadastre as receitas do mês para ver o peso na renda'}</span></div>
+      <div class="kpi"><span class="lbl">Juros por mês</span><span class="val ${A.jurosMes>0?'neg':''}">${money(A.jurosMes)}</span><span class="sub">${A.jurosMes>0?'quanto as dívidas crescem por mês sem pagamento':'nenhuma dívida com juros informados'}</span></div>
+      <div class="kpi"><span class="lbl">${plano?'Quitação com o plano':'Quitação no ritmo atual'}</span><span class="val">${ref.fim?esc(mesCurto(ref.fim)):'—'}</span><span class="sub">${ref.fim?`${ref.meses} ${ref.meses===1?'mês':'meses'} · ${money(ref.juros)} de juros`:ref.deficit?'o valor mensal não cobre os mínimos':'há dívida que não diminui só com o mínimo'}</span></div>
+    </div></section>
+  ${blocoPlano(A)}
+  <section class="panel"><h3>Evolução da dívida · últimos 6 meses</h3>
+    ${evo.some(x=>x.total>0)?colunas(evo.map((x,i)=>({l:mesCurto(x.mes),v:x.total,vRot:x.total?curto(x.total):'',titulo:`${mesLabel(x.mes)}: ${money(x.total)}`,cls:i===evo.length-1?'atual':''})),{rotulo:'Dívida total no fim de cada mês'})
+      +`<p class="small muted" style="margin:10px 0 0">${variacao===null||evo[evo.length-2].parcial?'O histórico se forma com os lançamentos e as atualizações de saldo.':variacao<0?`<b class="pos">A dívida caiu ${money(-variacao)}</b> desde o fim de ${mesLabel(evo[evo.length-2].mes)}.`:variacao>0?`<b class="neg">A dívida aumentou ${money(variacao)}</b> desde o fim de ${mesLabel(evo[evo.length-2].mes)}. Veja se entraram novas compras parceladas ou se algum pagamento não cobre os juros.`:'Sem variação em relação ao mês anterior.'}${evo.some(x=>x.parcial)?' Dívidas cadastradas entram a partir da data do saldo informado.':''}</p>`
+      :`<p class="small muted">O histórico aparece com os lançamentos dos próximos meses.</p>`}
+  </section>
+  <section><div class="section-head"><h2>Suas dívidas</h2><p>Saldo estimado com juros e pagamentos registrados</p><div class="right"><button class="btn primary" data-act="novaDivida">${icon(I.plus)}Nova dívida</button></div></div>
+    ${A.e.dividas.length||dividasAtivas().length?`<div class="list">${dividasAtivas().map(rowDivida).join('')}</div>`:`<p class="small muted">Nenhuma dívida cadastrada além das parcelas do Financeiro. Cadastre cartão no rotativo, cheque especial, empréstimos e acordos para incluí-los no plano.</p>`}
+  </section>
+  ${A.parcs.length?`<section class="panel"><h3>Compras parceladas do Financeiro</h3><p class="small muted" style="margin:-6px 0 10px">Entram no plano pelo calendário das parcelas. Quando uma termina, o valor dela passa para a próxima dívida.</p><div class="list">${A.parcs.map(rowParcelamento).join('')}</div></section>`:''}
+  ${quitadas.length?blocoQuitadas(quitadas):''}
+  <p class="note">Os valores são estimativas para decidir. O saldo oficial é o informado pelo credor: sempre que receber um extrato, use “Atualizar saldo”.</p>`;
+}
+
+function blocoPlano(A){
+  const {meta,est,base,plano,orc,minimo,prazoYm,paraPrazo}=A;
+  if(!meta) return `<section class="panel plano"><span class="eyebrow">Meta</span><h3>Defina quanto pode destinar às dívidas por mês</h3>
+    <p class="small muted" style="margin:0 0 12px">Com esse valor eu monto a ordem de quitação, a data de saída das dívidas e quanto de juros você deixa de pagar. Hoje os pagamentos mínimos somam <b>${money(minimo)}</b> por mês.</p>
+    <div class="actions"><button class="btn primary" data-act="metaDividas">Definir meta de quitação</button></div></section>`;
+  const ordem = plano ? [...A.e.dividas].sort(est==='bola'?(a,b)=>a.saldo-b.saldo||b.jurosMes-a.jurosMes:(a,b)=>b.jurosMes-a.jurosMes||a.saldo-b.saldo) : [];
+  const fimDe = id => plano?.dividas.find(x=>x.id===id)?.fim;
+  const ganhoMeses = plano?.fim && base.fim ? MT().mesesEntre(plano.fim,base.fim) : null;
+  const ganhoJuros = plano?.fim && base.fim ? r2(base.juros-plano.juros) : null;
+  const naoQuita = base.nunca.map(id=>A.e.dividas.find(d=>d.id===id)?.nome).filter(Boolean);
+  const prazoOk = prazoYm && plano?.fim ? plano.fim<=prazoYm : null;
+  const serie = plano?.serie||[], passo=Math.max(1,Math.ceil(serie.length/18));
+  return `<section class="panel plano"><div class="section-head" style="margin-bottom:6px"><h3 style="margin:0">Plano de quitação</h3><div class="right"><button class="btn sm" data-act="metaDividas">${icon(I.edit)}Ajustar meta</button></div></div>
+    <div class="seg" style="max-width:520px;margin-bottom:6px">${Object.entries(ESTRATEGIAS).map(([k,v])=>`<button type="button" aria-pressed="${est===k}" data-act="estrategia" data-v="${k}">${v.t}</button>`).join('')}</div>
+    <p class="small muted" style="margin:0 0 14px">${ESTRATEGIAS[est].d}</p>
+    ${plano.deficit?`<div class="alert danger"><span class="dot"></span><div><p>${money(orc)} por mês não cobre os pagamentos mínimos (faltam ${money(plano.deficit.falta)} em ${mesLabel(plano.deficit.mes)}).</p><p class="hint">Os mínimos somam ${money(minimo)} neste mês. Aumente o valor ou renegocie a parcela de alguma dívida.</p></div></div>`:''}
+    <div class="kpis plano-kpis">
+      <div class="kpi"><span class="lbl">Valor mensal</span><span class="val">${money(orc)}</span><span class="sub">${orc>minimo?`${money(orc-minimo)} acima dos mínimos`:'igual aos mínimos'}</span></div>
+      <div class="kpi"><span class="lbl">Livre das dívidas em</span><span class="val">${plano.fim?esc(mesCurto(plano.fim)):'—'}</span><span class="sub">${plano.fim?`${plano.meses} ${plano.meses===1?'mês':'meses'}${ganhoMeses>0?` · ${ganhoMeses} a menos que no ritmo atual`:''}`:'aumente o valor mensal'}</span></div>
+      <div class="kpi"><span class="lbl">Juros até quitar</span><span class="val">${money(plano.juros)}</span><span class="sub">${ganhoJuros>0?`economia de ${money(ganhoJuros)} sobre o ritmo atual`:naoQuita.length?`no ritmo atual, ${esc(naoQuita.join(', '))} não ${naoQuita.length>1?'são quitadas':'é quitada'}`:'mesmo valor do ritmo atual'}</span></div>
+      ${prazoYm?`<div class="kpi"><span class="lbl">Prazo desejado · ${esc(mesCurto(prazoYm))}</span><span class="val ${prazoOk===false?'neg':prazoOk?'pos':''}">${paraPrazo?money(paraPrazo):'—'}</span><span class="sub">${paraPrazo?`por mês para quitar até lá${prazoOk?' · o plano atual cumpre':prazoOk===false?` · faltam ${money(paraPrazo-orc)} por mês`:''}`:'prazo curto demais para os valores atuais'}</span></div>`:''}
+    </div>
+    ${ordem.length?`<h4 class="sub-h">Ordem de quitação</h4><ol class="ordem">${ordem.map((d,i)=>`<li><span class="n">${i+1}</span><div><b>${esc(d.nome)}</b><span class="small muted">${money(d.saldo)} · ${d.jurosMes?String(d.jurosMes).replace('.',',')+'% a.m.':'sem juros'}${d.minimo?` · mínimo ${money(d.minimo)}`:''}</span></div><span class="fim">${fimDe(d.id)?'quitada em '+esc(mesCurto(fimDe(d.id))):'—'}</span></li>`).join('')}</ol>
+      <p class="small muted" style="margin:6px 0 0">Todo mês: pague o mínimo de cada dívida e as parcelas do Financeiro; o que sobrar dos ${money(orc)} vai para a primeira dívida da lista e, quando ela acabar, para a seguinte.</p>`:''}
+    ${serie.length>1?`<h4 class="sub-h">Saldo devedor previsto</h4>${colunas(serie.filter((x,i)=>i%passo===0||i===serie.length-1).map(x=>({l:mesCurto(x.mes),v:x.total,titulo:`${mesLabel(x.mes)}: ${money(x.total)}`})),{rotulo:'Saldo devedor previsto mês a mês',compacto:true})}`:''}
+  </section>`;
+}
+
+function rowDivida(dv){
+  const s=saldoDiv(dv), j=+dv.jurosMes||0, jm=MT().jurosDoMes(s,j), parc=+dv.parcela||0;
+  const naoCobre = j>0 && s>0 && parc>0 && parc<=jm;
+  const pagos=pagamentosDiv(dv.id).filter(p=>p.data>dv.dataSaldo), ops=[];
+  if(dv.chavePix) ops.push(`<button class="btn sm pixbtn" data-act="copiarPixDiv" data-id="${dv.id}">${icon(I.copy)}Copiar Pix</button>`);
+  ops.push(`<button class="btn sm sage" data-act="pagarDivida" data-id="${dv.id}">${icon(I.check)}Registrar pagamento</button>`);
+  ops.push(`<button class="btn sm" data-act="saldoDivida" data-id="${dv.id}">Atualizar saldo</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="editDivida" data-id="${dv.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="delDivida" data-id="${dv.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
+  return `<div class="row"><div><div class="t">${esc(dv.nome)}${naoCobre?' <span class="pill atrasada">Pagamento não cobre os juros</span>':''}</div>
+    <div class="meta"><span>${esc(TIPOS_DIV_CURTO[dv.tipo]||'Dívida')}${dv.credor?' · '+esc(dv.credor):''}</span><span>${j?String(j).replace('.',',')+'% a.m. ≈ '+money(jm)+' de juros/mês':'sem juros'}</span>${parc?`<span>paga ${money(parc)}${dv.dia?' todo dia '+dv.dia:''}</span>`:'<span>sem pagamento mensal definido</span>'}${pillP(dv.periodo)}<span>saldo informado ${money(dv.saldo)} em ${dataCurta(dv.dataSaldo)}${pagos.length?` · ${pagos.length} ${pagos.length>1?'pagamentos':'pagamento'} depois`:''}</span></div></div>
+    <div class="v">${money(s)}<div class="small muted">saldo hoje</div></div><div class="ops">${ops.join('')}</div></div>`;
+}
+function rowParcelamento(p){
+  const pc=p.total?p.pagas/p.total:0;
+  return `<div class="row"><div><div class="t">${esc(p.nome)}</div><div class="meta"><span>${p.pagas} de ${p.total} pagas</span><span>parcela ${money(p.parcela)}</span>${p.proxima?`<span>próxima ${dataCurta(p.proxima)}</span>`:''}${p.fim?`<span>termina em ${esc(mesCurto(p.fim))}</span>`:''}${p.credito?'<span class="pill">Crédito</span>':''}</div>
+    <div class="bar" style="margin-top:8px;max-width:320px"><i style="width:${(pc*100).toFixed(0)}%"></i></div></div><div class="v">${money(p.restante)}<div class="small muted">a pagar</div></div><div class="ops"></div></div>`;
+}
+function blocoQuitadas(q){
+  return `<section class="panel"><h3>Dívidas quitadas</h3><div class="list">${q.map(d=>`<div class="row"><div><div class="t">${esc(d.nome)} <span class="pill paga">Quitada</span></div><div class="meta"><span>${esc(TIPOS_DIV_CURTO[d.tipo]||'')}</span>${d.quitadaEm?`<span>em ${dataBR(d.quitadaEm)}</span>`:''}<span>pago ${money(sum(pagamentosDiv(d.id),p=>p.valor))} desde o cadastro</span></div></div><div class="v"></div><div class="ops"><button class="btn sm ghost" data-act="reabrirDivida" data-id="${d.id}">Reabrir</button><button class="btn sm ghost" data-act="delDivida" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div></section>`;
+}
+
+function vMetaCredito(){
+  const ym=S.mes, C=analiseCredito(ym), teto=C.teto, at=C.atual.total;
+  const temDados=C.porMes.some(x=>x.total>0);
+  const usoPc = teto ? at/teto : null;
+  const livreProx = teto ? r2(teto-C.prox.total) : null;
+  const cart=dividasAtivas().filter(d=>d.tipo==='cartao');
+  return `
+  ${!teto?`<section class="panel plano"><span class="eyebrow">Meta</span><h3>Defina um teto mensal para o cartão de crédito</h3><p class="small muted" style="margin:0 0 12px">${temDados?`Nos últimos 3 meses, a média no crédito foi de <b>${money(C.media)}</b> por mês. Um teto um pouco abaixo disso já cria uma redução gradual.`:'Lance as despesas com a forma de pagamento “Crédito” para eu acompanhar a fatura de cada mês.'}</p><div class="actions"><button class="btn primary" data-act="metaCredito">Definir teto do crédito</button></div></section>`:''}
+  <section><div class="section-head"><h2>Cartão de crédito em ${mesLabel(ym)}</h2><p>Despesas com forma de pagamento “Crédito”, pelo vencimento</p>${teto?`<div class="right"><button class="btn sm" data-act="metaCredito">${icon(I.edit)}Ajustar teto</button></div>`:''}</div>
+    <div class="kpis">
+      <div class="kpi hero"><span class="lbl">No crédito neste mês</span><span class="val ${usoPc>1?'neg':''}">${money(at)}</span><span class="sub">${teto?`${Math.round(usoPc*100)}% do teto de ${money(teto)}`:'sem teto definido'}</span></div>
+      <div class="kpi"><span class="lbl">Em compras parceladas</span><span class="val">${money(C.atual.parcelado)}</span><span class="sub">${at?`${Math.round(C.atual.parcelado/at*100)}% da fatura do mês`:'nada parcelado neste mês'}</span></div>
+      <div class="kpi"><span class="lbl">Média dos 3 meses anteriores</span><span class="val">${money(C.media)}</span><span class="sub">${C.media&&at?(at<C.media?`<span class="pos">${money(C.media-at)} abaixo da média</span>`:at>C.media?`<span class="neg">${money(at-C.media)} acima da média</span>`:'igual à média'):'—'}</span></div>
+      <div class="kpi"><span class="lbl">Já comprometido</span><span class="val">${money(C.comprometido)}</span><span class="sub">nos próximos 6 meses · ${money(C.prox.total)} em ${MESES[+C.prox.mes.slice(5)-1]}</span></div>
+    </div></section>
+  ${teto&&livreProx!==null?`<div class="alert ${livreProx<0?'danger':livreProx<teto*.25?'warn':'ok'}"><span class="dot"></span><div><p>${livreProx<0?`${mesLabel(C.prox.mes)} já começa ${money(-livreProx)} acima do teto só com parcelas.`:`Para respeitar o teto em ${mesLabel(C.prox.mes)}, novas compras no crédito precisam ficar abaixo de ${money(livreProx)}.`}</p><p class="hint">${livreProx<0?'Evite novas compras parceladas até as parcelas atuais terminarem.':'O valor já considera as parcelas que vão cair na próxima fatura.'}</p></div></div>`:''}
+  <section class="panel"><h3>Crédito mês a mês</h3>
+    ${temDados?colunas(C.porMes.map(x=>({l:mesCurto(x.mes),v:x.total,vRot:x.total?curto(x.total):'',titulo:`${mesLabel(x.mes)}: ${money(x.total)}${x.parcelado?` (${money(x.parcelado)} em parcelas)`:''}`,cls:(x.mes===ym?'atual ':'')+(x.mes>hoje().slice(0,7)?'futuro ':'')+(teto&&x.total>teto?'acima':'')})),{linha:teto,linhaRot:'teto',rotulo:'Total no crédito por mês'})
+      +`<p class="small muted" style="margin:10px 0 0">Colunas claras são meses futuros: só parcelas já assumidas.${teto&&C.usados?` Nos últimos meses com uso, ${C.dentro} de ${C.usados} ficaram dentro do teto.`:''}</p>`
+      :`<p class="small muted">Ainda não há despesas no crédito. Ao lançar uma despesa, escolha a forma de pagamento “Crédito”.</p>`}
+  </section>
+  <div class="grid2">
+    <section class="panel"><h3>Onde o crédito foi usado</h3>${C.porCat.length?`<div class="list">${C.porCat.map(x=>linha(esc(x.c.nome),money(x.v))).join('')}</div>`:'<p class="small muted">Sem despesas no crédito neste mês.</p>'}</section>
+    <section class="panel"><h3>Como reduzir</h3><ul class="dicas">
+      <li>Prefira Pix ou débito para gastos do dia a dia: o dinheiro sai na hora e o mês fecha sem surpresa.</li>
+      <li>Antes de parcelar, olhe a coluna dos próximos meses: cada parcela nova diminui o espaço do teto.</li>
+      <li>Pague a fatura inteira. Se não der, evite o rotativo: ${cart.length?'cadastre a fatura em aberto em “Quitar dívidas” com os juros informados pelo banco':'o parcelamento da fatura costuma ter juros menores; confirme as taxas com o banco'}.</li>
+    </ul></section>
+  </div>`;
+}
+
+/* ---------- formulários e ações das metas ---------- */
+function formDivida(d){
+  d=d||{}; const novo=!d.id;
+  return `<form data-form="quick">${head(novo?'Nova dívida':'Editar dívida')}<div class="form-grid">
+    <div class="field full"><label for="dvN">Nome</label><input id="dvN" name="nome" required maxlength="60" placeholder="Ex.: Fatura Nubank, Empréstimo Caixa" value="${esc(d.nome)}"></div>
+    <div class="field"><label for="dvT">Tipo</label><select id="dvT" name="tipo">${opts(Object.entries(TIPOS_DIV),d.tipo||'cartao')}</select></div>
+    <div class="field"><label for="dvC">Credor (opcional)</label><input id="dvC" name="credor" maxlength="60" value="${esc(d.credor)}"></div>
+    <div class="field"><label for="dvS">Saldo devedor (R$)</label><input id="dvS" name="saldo" inputmode="decimal" required value="${fmtInput(d.saldo)}"></div>
+    <div class="field"><label for="dvD">Saldo na data</label><input id="dvD" name="dataSaldo" type="date" required value="${d.dataSaldo||hoje()}"></div>
+    <div class="field"><label for="dvJ">Juros ao mês (%)</label><input id="dvJ" name="juros" inputmode="decimal" value="${d.jurosMes?String(d.jurosMes).replace('.',','):''}" placeholder="0"></div>
+    <div class="field"><label for="dvP">Pagamento mensal (R$)</label><input id="dvP" name="parcela" inputmode="decimal" value="${fmtInput(d.parcela)}" placeholder="parcela ou mínimo"></div>
+    <div class="field"><label for="dvDia">Dia do vencimento</label><input id="dvDia" name="dia" type="number" min="1" max="31" value="${d.dia||''}"></div>
+    <div class="field"><label for="dvPer">Pagar com o recebimento</label><select id="dvPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
+    <div class="field"><label for="dvF">Forma de pagamento</label><select id="dvF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento||'Pix')}</select></div>
+    <div class="field"><label for="dvK">Chave Pix (opcional)</label><input id="dvK" name="chave" maxlength="140" autocomplete="off" value="${esc(d.chavePix)}"></div>
+    <div class="field full"><label for="dvO">Observação</label><input id="dvO" name="obs" maxlength="200" value="${esc(d.obs)}"></div></div>
+    <p class="note">Os juros mensais estão no extrato, na fatura ou no contrato (CET ao mês). Sem juros, deixe em branco. Compras parceladas já lançadas no Financeiro não precisam ser cadastradas aqui.</p>${rodape(novo?'Cadastrar dívida':'Salvar')}</form>`;
+}
+function lerDivida(f){
+  const g=n=>f.elements[n].value.trim(), saldo=parseValor(g('saldo')), juros=g('juros')?parseValor(g('juros')):0, parcela=g('parcela')?parseValor(g('parcela')):null, dia=g('dia')?+g('dia'):null;
+  if(!g('nome')) return 'Informe o nome da dívida.';
+  if(isNaN(saldo)||saldo<0) return 'Informe o saldo devedor, por exemplo 2350,00.';
+  if(isNaN(juros)||juros<0||juros>30) return 'Informe os juros ao mês entre 0 e 30%.';
+  if(parcela!==null&&(isNaN(parcela)||parcela<=0)) return 'Informe o pagamento mensal ou deixe em branco.';
+  if(dia!==null&&!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
+  return {nome:g('nome'),tipo:g('tipo'),credor:g('credor'),saldo:r2(saldo),dataSaldo:g('dataSaldo'),jurosMes:r2(juros*1000)/1000,parcela:parcela===null?null:r2(parcela),dia,periodo:g('periodo'),formaPagamento:g('forma'),chavePix:g('chave'),obs:g('obs')};
+}
+const catDividas = () => catPorNome('Dívidas e parcelas') || S.cats[0]?.id || '';
+function vencDivida(dv, ym){ return ym+'-'+String(Math.min(+dv.dia||10,diasNoMes(ym))).padStart(2,'0'); }
+
+const acoesMetas = {
+  mtTab: el => { S.mtTab=el.dataset.v; render(); },
+  novaDivida: () => abrirModal(formDivida(), async f=>{ const d=lerDivida(f); if(typeof d==='string') return d;
+    await gravarDivida(null,{...d,quitada:d.saldo===0,quitadaEm:d.saldo===0?hoje():null,historico:[{data:d.dataSaldo,saldo:d.saldo}]}); toast('Dívida cadastrada. O plano foi recalculado.'); }),
+  editDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return;
+    abrirModal(formDivida(dv), async f=>{ const d=lerDivida(f); if(typeof d==='string') return d;
+      const hist=[...(dv.historico||[])]; if(d.saldo!==+dv.saldo||d.dataSaldo!==dv.dataSaldo) hist.push({data:d.dataSaldo,saldo:d.saldo});
+      await gravarDivida(dv.id,{...d,historico:hist}); toast('Dívida atualizada.'); }); },
+  saldoDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return;
+    abrirModal(`<form data-form="quick">${head('Atualizar saldo')}<p class="muted" style="margin:0">${esc(dv.nome)} · estimado hoje ${money(saldoDiv(dv))}</p>
+      <div class="form-grid"><div class="field"><label for="usV">Saldo informado pelo credor (R$)</label><input id="usV" name="v" inputmode="decimal" required value="${fmtInput(saldoDiv(dv))}"></div><div class="field"><label for="usD">Data do extrato</label><input id="usD" name="d" type="date" required value="${hoje()}"></div></div>
+      <p class="note">Pagamentos registrados depois desta data continuam sendo descontados. Saldo zero marca a dívida como quitada.</p>${rodape('Salvar saldo')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value; if(isNaN(v)||v<0) return 'Informe o saldo.';
+      await gravarDivida(dv.id,{saldo:r2(v),dataSaldo:d,historico:[...(dv.historico||[]),{data:d,saldo:r2(v)}],...(v===0?{quitada:true,quitadaEm:d}:{})}); toast(v===0?'Dívida quitada. Parabéns pelo passo!':'Saldo atualizado.'); }); },
+  pagarDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return; const s=saldoDiv(dv);
+    const pend=S.desp.filter(x=>x.dividaId===dv.id && ativa(x) && x.situacao!=='paga').sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''))[0];
+    abrirModal(`<form data-form="quick">${head('Registrar pagamento')}<p class="muted" style="margin:0">${esc(dv.nome)} · saldo estimado ${money(s)}${pend?` · lançamento pendente de ${dataBR(pend.vencimento)}`:''}</p>
+      <div class="form-grid"><div class="field"><label for="pgV">Valor pago (R$)</label><input id="pgV" name="v" inputmode="decimal" required value="${fmtInput(pend?.valor||Math.min(+dv.parcela||s,s))}"></div><div class="field"><label for="pgD">Pago em</label><input id="pgD" name="d" type="date" required value="${hoje()}"></div>
+      <div class="field"><label for="pgF">Forma de pagamento</label><select id="pgF" name="forma">${opts(FORMAS.map(x=>[x,x]),pend?.formaPagamento||dv.formaPagamento||'Pix')}</select></div></div>
+      <p class="note">${pend?'O lançamento pendente do Financeiro será marcado como pago.':'Vira uma despesa paga em “Dívidas e parcelas” no Financeiro, ligada a esta dívida.'}</p>${rodape('Registrar pagamento')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value, forma=f.elements.forma.value; if(!(v>0)) return 'Informe o valor pago.';
+      if(pend) await atualizar('despesas',pend.id,{situacao:'paga',valor:r2(v),dataPagamento:d,formaPagamento:forma});
+      else await inserir('despesas',{descricao:'Pagamento · '+dv.nome,valor:r2(v),categoria:catDividas(),comportamento:'fixa',formaPagamento:forma,vencimento:d,dataPagamento:d,situacao:'paga',periodo:dv.periodo||'',parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''});
+      const resta=saldoDiv(dv);
+      if(resta<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:d}); toast('Pagamento registrado. Dívida quitada!'); } else toast(`Pagamento registrado. Saldo estimado: ${money(resta)}.`); }); },
+  delDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return; const n=S.desp.filter(x=>x.dividaId===dv.id).length;
+    confirmar('Excluir dívida',`Excluir “${esc(dv.nome)}”?${n?` Os ${n} lançamentos de pagamento continuam no Financeiro.`:''} Se ela foi paga, prefira “Atualizar saldo” com zero para guardar o histórico.`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('dividas').delete().eq('id',dv.id).eq('espaco_id',S.esp)); await carregarMetas(); await recarregar('despesas'); toast('Dívida excluída.'); }}]); },
+  reabrirDivida: async el => { await gravarDivida(el.dataset.id,{quitada:false,quitadaEm:null}); toast('Dívida reaberta.'); },
+  copiarPixDiv: async el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv?.chavePix) return;
+    try{ await navigator.clipboard.writeText(dv.chavePix); toast('Chave Pix copiada. Cole no app do banco.'); }catch(_){ abrirModal(`<div>${head('Chave Pix')}</div><p class="code" style="word-break:break-all;margin:0">${esc(dv.chavePix)}</p>`,null); } },
+  lancarPagDiv: async el => { el.disabled=true; const ym=S.mes, falt=pagamentosFaltando(ym);
+    try{ await inserir('despesas',falt.map(dv=>({descricao:'Pagamento · '+dv.nome,valor:r2(dv.parcela),categoria:catDividas(),comportamento:'fixa',formaPagamento:dv.formaPagamento||'',vencimento:vencDivida(dv,ym),situacao:'pendente',periodo:dv.periodo||'',parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''})));
+      toast(`${falt.length} ${falt.length>1?'pagamentos lançados':'pagamento lançado'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
+  estrategia: async el => { const m=metaDe('quitar_dividas'); await salvarMeta('quitar_dividas',{dados:{...(m?.dados||{}),estrategia:el.dataset.v}}); },
+  metaDividas: () => { const m=metaDe('quitar_dividas'), e=entradaPlano(null), min=MT().minimoMensal(e);
+    abrirModal(`<form data-form="quick">${head('Meta: quitar as dívidas')}<p class="muted" style="margin:0">Os pagamentos mínimos e as parcelas do Financeiro somam <b>${money(min)}</b> neste mês. Tudo o que você destinar acima disso acelera a quitação.</p>
+      <div class="form-grid"><div class="field"><label for="mdV">Valor por mês para dívidas (R$)</label><input id="mdV" name="v" inputmode="decimal" required value="${fmtInput(m?.valorAlvo??min)}"></div>
+      <div class="field"><label for="mdP">Quero quitar até (opcional)</label><input id="mdP" name="p" type="month" value="${m?.prazo?m.prazo.slice(0,7):''}" min="${hoje().slice(0,7)}"></div>
+      <div class="field full"><label>Ordem de quitação</label><div class="seg" id="segValor">${Object.entries(ESTRATEGIAS).map(([k,v])=>`<button type="button" aria-pressed="${(m?.dados?.estrategia||'avalanche')===k}" data-act="modoValor" data-v="${k}">${v.t}</button>`).join('')}</div><input type="hidden" name="modoValor" value="${m?.dados?.estrategia||'avalanche'}"></div></div>
+      <p class="note">Com o prazo, eu calculo quanto por mês seria necessário para cumpri-lo e comparo com o valor escolhido.</p>${rodape('Salvar meta')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value), p=f.elements.p.value; if(!(v>0)) return 'Informe o valor mensal.';
+      await salvarMeta('quitar_dividas',{titulo:'Quitar dívidas',valorAlvo:r2(v),prazo:p?p+'-01':null,dados:{...(m?.dados||{}),estrategia:f.elements.modoValor.value}}); toast('Meta salva. O plano foi recalculado.'); }); },
+  metaCredito: () => { const m=metaDe('limite_credito'), C=analiseCredito(S.mes);
+    abrirModal(`<form data-form="quick">${head('Meta: teto do cartão de crédito')}<p class="muted" style="margin:0">Média dos últimos 3 meses: <b>${money(C.media)}</b>. Já comprometido em ${mesLabel(C.prox.mes)}: <b>${money(C.prox.total)}</b>.</p>
+      <div class="field"><label for="mcV">Teto mensal no crédito (R$)</label><input id="mcV" name="v" inputmode="decimal" required value="${fmtInput(m?.valorAlvo??(C.media?Math.round(C.media*.9):''))}"></div>
+      <p class="note">O alerta aparece no Início quando o mês chega a 85% do teto e quando passa dele.</p>${rodape('Salvar teto')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o teto mensal.'; await salvarMeta('limite_credito',{titulo:'Reduzir o uso do crédito',valorAlvo:r2(v)}); toast('Teto do crédito salvo.'); }); }
+};
+
+/* alertas do gestor ligados às metas */
+function alertasMetas(ym){
+  const a=[]; if(S.metasErro||!S.dividas) return a;
+  const teto=metaDe('limite_credito')?.valorAlvo;
+  if(teto){ const g=sum(despMes(ym).filter(ehCredito),d=>d.valor);
+    if(g>teto) a.push({k:'danger',t:`O crédito passou do teto em ${mesLabel(ym)}: ${money(g)} de ${money(+teto)}.`,h:'Até o fim do mês, prefira Pix ou débito. Veja os próximos meses em Metas.'});
+    else if(g>=teto*.85) a.push({k:'warn',t:`O crédito já usou ${Math.round(g/teto*100)}% do teto do mês.`,h:`Restam ${money(teto-g)} até o teto de ${money(+teto)}.`}); }
+  const crescem=dividasAtivas().filter(d=>+d.jurosMes>0 && +d.parcela>0 && +d.parcela<=MT().jurosDoMes(saldoDiv(d),d.jurosMes));
+  if(crescem.length) a.push({k:'danger',t:`${crescem.map(d=>esc(d.nome)).join(', ')}: o pagamento mensal não cobre os juros, então a dívida cresce.`,h:'Priorize esta dívida no plano de quitação ou procure renegociar a taxa.'});
+  const falt=pagamentosFaltando(ym);
+  if(falt.length) a.push({k:'',t:`${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(ym)}.`,h:'Use “Lançar no Financeiro” em Metas para incluí-los nos dias 10 e 20.'});
+  return a;
+}
+
 /* ---------- ações ---------- */
 const acoes = {
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
@@ -812,12 +1137,13 @@ const acoes = {
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
       await atualizar('recorrencias',t.id,{descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()}); toast('Conta recorrente atualizada.'); }); },
   delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; confirmar('Excluir conta recorrente',`Excluir o modelo “${esc(t.descricao)}”? Os lançamentos já feitos continuam no Financeiro.`,[{t:'Excluir modelo',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
-  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc)};
+  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[]};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
-  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
+  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR') return 'Digite EXCLUIR em maiúsculas para confirmar.';
       for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) chk(await sb.from(t).delete().eq('espaco_id',S.esp));
-      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); toast('Dados do espaço excluídos.'); }),
+      for(const t of ['dividas','metas']){ try{ chk(await sb.from(t).delete().eq('espaco_id',S.esp)); }catch(_){} }
+      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); toast('Dados do espaço excluídos.'); }),
   excluirConta: () => abrirModal(`<form data-form="quick">${head('Excluir minha conta')}<p style="margin:0">Sua conta, seu espaço pessoal e os espaços compartilhados que você criou serão apagados de forma definitiva. Espaços criados por outras pessoas continuam existindo para elas. Exporte seus dados antes.</p><div class="field"><label for="qX">Digite EXCLUIR MINHA CONTA para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir conta','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR MINHA CONTA') return 'Digite EXCLUIR MINHA CONTA em maiúsculas para confirmar.'; chk(await sb.rpc('excluir_minha_conta')); await sb.auth.signOut(); }),
   editarNome: () => abrirModal(`<form data-form="quick">${head('Alterar nome')}<div class="field"><label for="qN">Nome</label><input id="qN" name="n" required maxlength="60" value="${esc(S.perfil?.nome)}"></div>${rodape('Salvar')}</form>`,
@@ -1588,7 +1914,7 @@ function blocoConferir(){
     <div class="list">${[...d.map(x=>rowDesp(x)),...r.map(x=>rowRec(x))].join('')}</div></section>`;
 }
 
-Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido);
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{

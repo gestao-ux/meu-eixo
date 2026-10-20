@@ -383,3 +383,44 @@ tr.ignorado td{opacity:.5}
 .btn.conf{background:var(--warn-soft);color:var(--warn);border-color:transparent}
 .panel.conferir{border-color:var(--warn)}
 form[data-form="rapidoNovo"],form[data-form="cupom"]{display:flex;flex-direction:column;gap:14px}
+
+/* ---------- Metas: plano de quitação e crédito (Etapa 10) ---------- */
+.plano .eyebrow{display:block;margin-bottom:6px}
+.plano h3{margin-bottom:8px}
+.plano .kpis{margin:4px 0 6px}
+.plano-kpis .val{font-size:22px}
+.sub-h{font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:20px 0 10px;font-family:inherit}
+.ordem{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ordem li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line)}
+.ordem li:last-child{border-bottom:0}
+.ordem li:first-child{background:var(--sage-soft)}
+.ordem .n{width:26px;height:26px;border-radius:99px;display:grid;place-items:center;background:var(--blue-soft);color:var(--blue);font-weight:700;font-size:13px}
+.ordem li:first-child .n{background:var(--sage);color:var(--on-blue)}
+.ordem li > div{display:flex;flex-direction:column;min-width:0}
+.ordem li > div b{font-size:14.5px;overflow-wrap:anywhere}
+.ordem .fim{font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.cols{position:relative;display:flex;align-items:stretch;gap:6px;height:200px;padding-top:2px;overflow-x:auto}
+.cols.compacto{height:150px}
+.col{flex:1 0 38px;display:flex;flex-direction:column;align-items:stretch;min-width:38px}
+.col-v{height:16px;font-size:10.5px;color:var(--muted);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums;overflow:visible}
+.col-b{flex:1;display:flex;align-items:flex-end;margin:4px 0}
+.col-b i{display:block;width:100%;background:var(--blue);border-radius:5px 5px 2px 2px;opacity:.85;transition:height .3s}
+.col.atual .col-b i{background:var(--sage);opacity:1}
+.col.futuro .col-b i{opacity:.35}
+.col.acima .col-b i{background:var(--danger)}
+.col-l{height:18px;font-size:11px;color:var(--muted);text-align:center;white-space:nowrap}
+.cols-area{position:absolute;left:0;right:0;top:22px;bottom:22px;pointer-events:none;z-index:1}
+.cols-linha{position:absolute;left:0;right:0;border-top:1.5px dashed var(--warn)}
+.cols-linha span{position:absolute;right:0;bottom:2px;font-size:11px;font-weight:600;color:var(--warn);background:var(--bg);padding:0 4px;border-radius:4px}
+.cols.compacto .col-v{display:none}
+.cols.compacto .cols-area{top:6px}
+.dicas{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.5}
+.kpi.hero .val.neg{color:var(--danger)}
+@media (max-width:640px){
+  .plano-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .plano-kpis .val{font-size:19px}
+  .ordem li{grid-template-columns:28px minmax(0,1fr)}
+  .ordem .fim{grid-column:2}
+  .col{min-width:34px;flex-basis:34px}
+  .col-v{font-size:9.5px}
+}

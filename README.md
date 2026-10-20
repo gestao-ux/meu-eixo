@@ -14,6 +14,7 @@ Site estático (HTML, CSS e JavaScript) com Supabase para banco de dados, login 
 | `estilo.css` | Identidade visual (branco, verde-sálvia, azul, tema claro e escuro) |
 | `app.js` | Telas, cálculos financeiros e acesso ao banco |
 | `config.js` | Endereço e chave pública do Supabase |
+| `metas.js` | Saldo das dívidas com juros, plano de quitação e prazo |
 | `supabase/schema.sql` | Tabelas, regras de acesso (RLS) e funções do banco |
 | `vercel.json` | Cabeçalhos de segurança da hospedagem |
 
@@ -40,4 +41,4 @@ Site estático (HTML, CSS e JavaScript) com Supabase para banco de dados, login 
 
 ## Etapas
 1–3 ✔ Identidade, banco, receitas, despesas, parcelas, recorrências, dias 10 e 20, orçamento, contas e espaços compartilhados
-4 Leitura de comprovantes · 5 Perfil alimentar · 6 Cardápios e marmitas · 7 Preços de Cuiabá · 8 Lista de compras e estoque · 9 Comprovantes → histórico alimentar · 10 Análises e metas · 11 Relatório mensal automático · 12 Testes finais
+4 Leitura de comprovantes · 5 Perfil alimentar · 6 Cardápios e marmitas · 7 Preços de Cuiabá · 8 Lista de compras e estoque · 9 Comprovantes → histórico alimentar · 10 ✔ Metas: quitar dívidas e reduzir o crédito (atualização `007_dividas_metas.sql`) · 11 Relatório mensal automático · 12 Testes finais

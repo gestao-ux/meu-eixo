@@ -406,6 +406,13 @@ function vPlanejamento(){
       <div class="kpi"><span class="lbl">Dívidas e parcelas</span><span class="val">${money(sum(parcelasFuturas(),d=>d.valor))}</span><span class="sub">${money(rs.parcelas)} neste mês</span></div>
       <div class="kpi"><span class="lbl">Compromissos futuros</span><span class="val">${money(sum(futuros,d=>d.valor))}</span><span class="sub">nos meses seguintes</span></div>
     </div></section>
+  <section><div class="section-head"><h2>Orçamento por categoria</h2><p>Defina quanto pode gastar em cada categoria neste mês.</p><div class="right">${!temOrc&&temAnt?`<button class="btn sm" data-act="copiarOrc">${icon(I.copy)}Copiar de ${MESES[+addMes(ym,-1).slice(5)-1]}</button>`:''}</div></div>
+    ${S.cats.length?`<div class="scroll"><table><thead><tr><th>Categoria</th><th class="r">Orçamento planejado</th><th class="r">Gasto no mês</th><th class="r">Saldo do orçamento</th><th style="min-width:120px">Uso</th></tr></thead>
+      <tbody>${S.cats.map(c=>{ const L=+lim[c.id]||0, g=gastoCat(ym,c.id), pc=L?g/L:0, cls=pc>1?'danger':pc>=.85?'warn':'';
+        return `<tr><td>${esc(c.nome)}</td><td class="r"><input class="inline-input num" inputmode="decimal" aria-label="Orçamento de ${esc(c.nome)}" data-orc="${c.id}" value="${L?fmtInput(L):''}" placeholder="0,00"></td><td class="r">${money(g)}</td><td class="r ${L&&L-g<0?'neg':''}">${L?money(L-g):'—'}</td><td>${L?`<div class="bar ${cls}"><i style="width:${Math.min(100,pc*100).toFixed(0)}%"></i></div>`:'<span class="small muted">sem limite</span>'}</td></tr>`; }).join('')}</tbody></table></div>
+      <p class="small muted" style="margin-top:8px">O valor é salvo ao sair do campo. O gasto considera todas as despesas não canceladas do mês, pagas ou pendentes.</p>`
+      :`<div class="empty"><strong>Nenhuma categoria cadastrada</strong>Crie suas categorias em Configurações para montar o orçamento.</div>`}
+  </section>
   ${sobre?`<div class="alert warn"><span class="dot"></span><div><p>Os compromissos do dia 10 (${money(p10.comp)}) passam da receita prevista do período (${money(p10.esper)}) em ${money(p10.comp-p10.esper)}.</p><p class="hint">${cand.length?`Contas que podem ir para o dia 20 por serem variáveis ou vencerem depois do dia 20: ${cand.map(d=>esc(d.descricao)+' ('+money(d.valor)+')').join(', ')}. Use os botões em cada conta para decidir.`:'Revise os gastos variáveis do período. Nenhuma conta foi movida automaticamente.'}</p></div></div>`:''}
   <section><div class="section-head"><h2>Recebimentos dos dias 10 e 20</h2><p>Atribua cada compromisso ao recebimento que vai pagá-lo.</p></div>
     <div class="periods">${blocoPeriodo(ym,'10')}${blocoPeriodo(ym,'20',p10.saldo)}
@@ -413,13 +420,7 @@ function vPlanejamento(){
         <div class="figs"><div>Compromissos<b>${money(sum(semD,d=>d.valor))}</b></div><div>Receitas<b>${money(sum(semR,recEsperado))}</b></div></div>
         <div class="body">${semR.length?`<div class="list">${semR.map(r=>rowRec(r,{mover:true})).join('')}</div>`:''}${semD.length?`<div class="list">${semD.map(d=>rowDesp(d,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Todas as contas do mês já têm período.</p>`}</div></article>
     </div></section>
-  <section><div class="section-head"><h2>Orçamento por categoria</h2><p>Defina quanto pode gastar em cada categoria neste mês.</p><div class="right">${!temOrc&&temAnt?`<button class="btn sm" data-act="copiarOrc">${icon(I.copy)}Copiar de ${MESES[+addMes(ym,-1).slice(5)-1]}</button>`:''}</div></div>
-    ${S.cats.length?`<div class="scroll"><table><thead><tr><th>Categoria</th><th class="r">Orçamento planejado</th><th class="r">Gasto no mês</th><th class="r">Saldo do orçamento</th><th style="min-width:120px">Uso</th></tr></thead>
-      <tbody>${S.cats.map(c=>{ const L=+lim[c.id]||0, g=gastoCat(ym,c.id), pc=L?g/L:0, cls=pc>1?'danger':pc>=.85?'warn':'';
-        return `<tr><td>${esc(c.nome)}</td><td class="r"><input class="inline-input num" inputmode="decimal" aria-label="Orçamento de ${esc(c.nome)}" data-orc="${c.id}" value="${L?fmtInput(L):''}" placeholder="0,00"></td><td class="r">${money(g)}</td><td class="r ${L&&L-g<0?'neg':''}">${L?money(L-g):'—'}</td><td>${L?`<div class="bar ${cls}"><i style="width:${Math.min(100,pc*100).toFixed(0)}%"></i></div>`:'<span class="small muted">sem limite</span>'}</td></tr>`; }).join('')}</tbody></table></div>
-      <p class="small muted" style="margin-top:8px">O valor é salvo ao sair do campo. O gasto considera todas as despesas não canceladas do mês, pagas ou pendentes.</p>`
-      :`<div class="empty"><strong>Nenhuma categoria cadastrada</strong>Crie suas categorias em Configurações para montar o orçamento.</div>`}
-  </section>`;
+`;
 }
 
 function vRelatorios(){

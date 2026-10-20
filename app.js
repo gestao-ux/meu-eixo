@@ -105,7 +105,7 @@ function periodo(ym,p){
 const parcelasFuturas = () => S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && d.situacao!=='paga');
 const orcamentoMes = ym => S.orc[ym]?.limites || {};
 const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),d=>d.valor);
-const recorrentesFaltando = ym => S.recor.filter(t=>t.ativo!==false && (t.inicio||'0000-00')<=ym && !S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===ym));
+const recorrentesFaltando = ym => S.recor.filter(t=>t.ativo!==false && (t.inicio||'0000-00')<=ym && !(t.geradoAte && t.geradoAte>=ym) && !S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===ym));
 
 function alertas(ym){
   const a=[], h=hoje();
@@ -186,7 +186,7 @@ async function abrirEspaco(id){
   S.canal.subscribe();
   for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
   S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas();
-  S.fase='pronto'; render();
+  S.fase='pronto'; render(); garantirRecorrentes();
 }
 async function entrar(session){
   S.user=session.user; S.fase='carregando'; render();
@@ -379,6 +379,7 @@ function vPlanejamento(){
   const futuros=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&compDesp(d)>ym);
   const lim=orcamentoMes(ym), temOrc=Object.keys(lim).length>0, temAnt=Object.keys(orcamentoMes(addMes(ym,-1))).length>0;
   return `
+  ${S.falta008?`<div class="alert warn"><span class="dot"></span><div><p>Para as contas fixas entrarem sozinhas em todos os meses, execute a atualização <b>008_recorrencias_automaticas.sql</b> no Supabase (SQL Editor).</p><p class="hint">Até lá, use o botão abaixo para lançar as contas fixas de cada mês.</p></div></div>`:''}
   ${rm.length?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>${rm.length} ${rm.length>1?'contas fixas recorrentes ainda não foram lançadas':'conta fixa recorrente ainda não foi lançada'} em ${mesLabel(ym)}: ${rm.map(t=>esc(t.descricao)).join(', ')}.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="gerarRecorrentes">Lançar contas fixas de ${MESES[+ym.slice(5)-1]}</button></div></div></div>`:''}
   <section><div class="section-head"><h2>Visão mensal</h2><p>Tudo o que entra e sai em ${mesLabel(ym)}</p></div>
     <div class="kpis">
@@ -572,7 +573,7 @@ function formDespesa(d){
       <div class="field full"><span class="lbl">O valor informado abaixo é</span><div class="seg" id="segValor"><button type="button" aria-pressed="true" data-act="modoValor" data-v="parcela">O valor de cada parcela</button><button type="button" aria-pressed="false" data-act="modoValor" data-v="total">O total da compra</button></div><input type="hidden" name="modoValor" value="parcela"></div>
     </div>
     <p class="note" id="parcPrev" data-show="parcelada" style="margin:12px 0 0"></p>
-    <p class="note" data-show="mensal" style="margin:12px 0 0">Vira uma conta fixa: a cada mês, no Planejamento, você lança a conta do mês com um toque, já com valor, vencimento e chave Pix.</p>
+    <p class="note" data-show="mensal" style="margin:12px 0 0">Vira uma conta fixa: entra automaticamente em todos os meses a partir deste vencimento, com o mesmo valor, dia e chave Pix. Os próximos 12 meses ficam sempre lançados.</p>
   </div>`:(grupo?`<div class="grupo"><span class="grupo-t">Parcelamento</span>
     <div class="form-grid">
       <div class="field"><label for="dAtual">Esta é a parcela nº</label><input id="dAtual" name="parcelaAtual" type="number" inputmode="numeric" min="1" max="120" value="${d.parcelaAtual}"></div>
@@ -643,9 +644,10 @@ async function salvarDespesa(f){
   }
   const arq=await enviarArquivo();
   let recorrenciaId='';
-  if(modo==='mensal'){ recorrenciaId=await inserir('recorrencias',{descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),ativo:true,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}); base.comportamento='fixa'; }
+  if(modo==='mensal'){ recorrenciaId=await inserirRecorrencia({descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),geradoAte:fd.vencimento.slice(0,7),ativo:true,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}); base.comportamento='fixa'; }
   await inserir('despesas',{...base,valor:r2(valor),vencimento:fd.vencimento,parcelas:1,recorrenciaId,...(arq||{})});
-  toast(modo==='mensal'?'Conta fixa salva. Nos próximos meses, lance pelo Planejamento.':'Despesa salva.');
+  if(modo==='mensal') await garantirRecorrentes();
+  toast(modo==='mensal'?'Conta fixa salva e lançada em todos os meses a partir deste.':'Despesa salva.');
 }
 async function editarDespesa(f,fd,base,valor){
   const id=f.dataset.id, d=S.desp.find(x=>x.id===id); if(!d) return 'Este lançamento não existe mais. Feche e atualize a página.';
@@ -1053,10 +1055,56 @@ function alertasMetas(ym){
   return a;
 }
 
+/* ---------- contas fixas: lançamento automático ---------- */
+const HORIZONTE_REC = 11; // mês atual + 11 = 12 meses lançados à frente
+const linhaRecorrente = (t, ym) => ({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',
+  vencimento:ym+'-'+String(Math.min(+t.dia||10,diasNoMes(ym))).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||'',favorecido:t.favorecido||''});
+// cria o modelo; sem a atualização 008, grava sem o controle de meses lançados
+async function inserirRecorrencia(o){ try{ return await inserir('recorrencias',o); }catch(e){ if(/gerado_ate/.test(e?.message||'')){ const {geradoAte,...resto}=o; return await inserir('recorrencias',resto); } throw e; } }
+let gerandoRec=false;
+async function garantirRecorrentes(){
+  if(gerandoRec || !S.recor.length || S.fase!=='pronto') return;
+  if(S.recor.some(t=>!('geradoAte' in t))){ S.falta008=true; schedule(); return; }
+  S.falta008=false;
+  const atual=hoje().slice(0,7), base=addMes(atual,HORIZONTE_REC), alvo=S.mes>base?S.mes:base, esp=S.esp;
+  gerandoRec=true; let criadas=0, mexeu=false;
+  try{
+    for(const t of S.recor){
+      if(t.ativo===false) continue;
+      const desde = t.geradoAte ? addMes(t.geradoAte,1) : (t.inicio||atual);
+      if(desde>alvo) continue;
+      const rows=[]; for(let m=desde; m<=alvo; m=addMes(m,1)) if(!S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===m)) rows.push(linhaRecorrente(t,m));
+      // trava otimista: só um aparelho lança cada intervalo
+      let q=sb.from('recorrencias').update({gerado_ate:alvo}).eq('id',t.id).eq('espaco_id',esp);
+      q = t.geradoAte ? q.eq('gerado_ate',t.geradoAte) : q.is('gerado_ate',null);
+      const ok=chk(await q.select('id')); mexeu=true;
+      if(!ok.length || S.esp!==esp) continue;
+      if(rows.length){ chk(await sb.from('despesas').insert(rows.map(r=>({...toDb(r),espaco_id:esp})))); criadas+=rows.length; }
+    }
+    if(criadas) await recarregar('despesas');
+    if(mexeu) await recarregar('recorrencias');
+  }catch(e){ console.error(e); if(/gerado_ate/.test(e?.message||'')){ S.falta008=true; schedule(); } }
+  finally{ gerandoRec=false; }
+}
+/* alterações no modelo valem para os lançamentos ainda não pagos deste mês em diante */
+async function aplicarModeloFuturo(t, novo){
+  const atual=hoje().slice(0,7);
+  const alvos=S.desp.filter(d=>d.recorrenciaId===t.id && d.situacao!=='paga' && ativa(d) && compDesp(d)>=atual);
+  if(novo.ativo===false){
+    const sair=alvos.filter(d=>compDesp(d)>atual).map(d=>d.id);
+    if(sair.length) chk(await sb.from('despesas').delete().in('id',sair).eq('espaco_id',S.esp));
+    chk(await sb.from('recorrencias').update({gerado_ate:atual}).eq('id',t.id).eq('espaco_id',S.esp));
+  }
+  for(const d of alvos){ if(novo.ativo===false && compDesp(d)>atual) continue;
+    const ym=compDesp(d), l=linhaRecorrente({...t,...novo,id:t.id},ym);
+    chk(await sb.from('despesas').update(toDb({descricao:l.descricao,valor:l.valor,categoria:l.categoria,formaPagamento:l.formaPagamento,periodo:l.periodo,vencimento:l.vencimento,chavePix:l.chavePix,pixCopiaCola:l.pixCopiaCola})).eq('id',d.id).eq('espaco_id',S.esp)); }
+  await recarregar('despesas');
+}
+
 /* ---------- ações ---------- */
 const acoes = {
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
-  mes: el => { S.mes=addMes(S.mes,+el.dataset.n); render(); },
+  mes: el => { S.mes=addMes(S.mes,+el.dataset.n); render(); if(S.mes>addMes(hoje().slice(0,7),HORIZONTE_REC)) garantirRecorrentes(); },
   tab: el => { S.tab=el.dataset.v; render(); },
   fechar: () => fecharModal(),
   recarregarPagina: () => location.reload(),
@@ -1121,10 +1169,16 @@ const acoes = {
       <div class="field"><label for="tK">Chave Pix</label><input id="tK" name="chave" maxlength="140" autocomplete="off" value="${esc(t.chavePix)}"></div>
       <div class="field full"><label for="tCC">Pix copia e cola (opcional)</label><input id="tCC" name="copia" maxlength="600" autocomplete="off" value="${esc(t.pixCopiaCola)}"></div>
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (gera lançamento todo mês)</label></div>
-      <p class="note">Contas já lançadas não mudam. Para corrigir um mês específico, edite o lançamento no Financeiro.</p>${rodape('Salvar')}</form>`,
+      <p class="note">A alteração vale para os lançamentos ainda não pagos deste mês em diante. Meses já pagos não mudam. Ao pausar, os meses futuros não pagos saem do Financeiro.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
-      await atualizar('recorrencias',t.id,{descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()}); toast('Conta recorrente atualizada.'); }); },
-  delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; confirmar('Excluir conta recorrente',`Excluir o modelo “${esc(t.descricao)}”? Os lançamentos já feitos continuam no Financeiro.`,[{t:'Excluir modelo',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
+      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()};
+      await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Conta recorrente atualizada.'); }); },
+  delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; const atual=hoje().slice(0,7);
+    const fut=S.desp.filter(d=>d.recorrenciaId===t.id && d.situacao!=='paga' && ativa(d) && compDesp(d)>atual);
+    confirmar('Excluir conta fixa',`Excluir “${esc(t.descricao)}”?${fut.length?` Há ${fut.length} ${fut.length>1?'meses futuros lançados e não pagos':'mês futuro lançado e não pago'}.`:''} Meses já pagos continuam no Financeiro.`,
+      fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam no Financeiro.'); }},
+        {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover('despesas',fut.map(d=>d.id)); await remover('recorrencias',t.id); toast('Conta fixa encerrada.'); }}]
+      :[{t:'Excluir',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
   exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[]};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
   apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
@@ -1861,8 +1915,9 @@ async function salvarNovoRapido(f){
     const ids=chk(await sb.from('despesas').insert(rows.map(x=>({...toDb(x),espaco_id:S.esp}))).select('id')).map(x=>x.id); await recarregar('despesas');
     return {tipo:'ok',txt:`${desc}: parcela ${A} de ${N} paga, ${N-A} ${N-A===1?'parcela lançada':'parcelas lançadas'} nos próximos meses`,motivo:'nova',desfazer:{t:'despesas',ids,apagar:true}}; }
   let recorrenciaId='';
-  if(rep==='mensal') recorrenciaId=await inserir('recorrencias',{descricao:desc,valor:r2(valor),categoria:cat,formaPagamento:forma,periodo:'',dia:+data.slice(8,10),inicio:data.slice(0,7),ativo:true,chavePix:r.chave||'',favorecido:nome});
+  if(rep==='mensal') recorrenciaId=await inserirRecorrencia({descricao:desc,valor:r2(valor),categoria:cat,formaPagamento:forma,periodo:'',dia:+data.slice(8,10),inicio:data.slice(0,7),geradoAte:data.slice(0,7),ativo:true,chavePix:r.chave||'',favorecido:nome});
   const id=await inserir('despesas',{...base,comportamento:rep==='mensal'?'fixa':'variavel',valor:r2(valor),vencimento:data,dataCompra:data,dataPagamento:data,situacao:'paga',parcelas:1,recorrenciaId,...arq});
+  if(recorrenciaId) garantirRecorrentes();
   return {tipo:'ok',txt:`${desc} · ${money(valor)} em ${catNome(cat)}${rep==='mensal'?' (conta fixa mensal)':''}`,motivo:'nova',desfazer:{t:'despesas',id,apagar:true,recor:recorrenciaId||null}};
 }
 function mostrarResumoFila(){
@@ -1886,7 +1941,7 @@ const acoesRapido = {
   rnRep: el => { const f=el.closest('form'); f.elements.rep.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); f.querySelector('[data-rn="parc"]').hidden=el.dataset.v!=='parcelada'; },
   rnPular: () => { const r=S.fila?.resolver; if(r){ S.fila.resolver=null; r(null); } },
   rfDesfazer: async el => { const x=S.fila.feitos[+el.dataset.i], d=x.desfazer; el.disabled=true;
-    try{ if(d.apagar){ const ids=d.ids||[d.id]; const rows=(d.t==='despesas'?S.desp:S.rec).filter(y=>ids.includes(y.id)); await remover(d.t,ids); apagarArquivos(rows.map(y=>y.comprovante)); if(d.recor) await remover('recorrencias',d.recor); }
+    try{ if(d.apagar){ const ids=d.ids||[d.id]; const rows=(d.t==='despesas'?S.desp:S.rec).filter(y=>ids.includes(y.id)); await remover(d.t,ids); apagarArquivos(rows.map(y=>y.comprovante)); if(d.recor){ const fut=S.desp.filter(y=>y.recorrenciaId===d.recor && y.situacao!=='paga').map(y=>y.id); if(fut.length) await remover('despesas',fut); await remover('recorrencias',d.recor); } }
       else { const atual=(d.t==='despesas'?S.desp:S.rec).find(y=>y.id===d.id); if(atual?.comprovante && atual.comprovante!==d.patch.comprovante) apagarArquivos([atual.comprovante]); await atualizar(d.t,d.id,d.patch); }
       x.desfeito=true; mostrarResumoFila(); toast('Lançamento desfeito.'); }catch(e){ dbErr(e); el.disabled=false; } },
   rfCupom: el => { const file=S.fila.feitos[+el.dataset.i].file; abrirCupom(); const dt=new DataTransfer(); dt.items.add(file); const inp=$('#arqCupom'); inp.files=dt.files; processarCupom(inp); },

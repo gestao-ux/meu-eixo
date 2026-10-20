@@ -333,7 +333,6 @@ function vInicio(){
   const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
   return `
   <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
-  <section class="rapido-bar"><form data-form="rapidoTexto" class="rapido-texto"><div class="field"><label for="rtHome">Lançamento rápido</label><input id="rtHome" name="t" autocomplete="off" placeholder="uber 23,50 · ifood 45,90 ontem · recebi 150 João"></div><button class="btn primary" type="submit">Lançar</button><button class="btn" type="button" data-act="enviarComprovante">${icon(I.clip)}Comprovante</button></form><p class="err" id="rtErr"></p></section>
   ${blocoConferir()}
   ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
   <section><div class="section-head"><h2>Visão financeira</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>

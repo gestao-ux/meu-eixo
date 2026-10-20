@@ -323,13 +323,6 @@ function vInicio(){
       <div class="kpi"><span class="lbl">Contas pendentes</span><span class="val">${money(rs.pendVal)}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'lançamento':'lançamentos'}</span></div>
       <div class="kpi"><span class="lbl">Livre para não planejados</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">receitas menos todas as despesas do mês</span></div>
     </div></section>
-  <div class="actions">
-    <button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Adicionar despesa</button>
-    <button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button>
-    <button class="btn" data-act="cupomNovo">${icon(I.foto)}Cupom do mercado</button>
-    <button class="btn" data-act="novo" data-tipo="receita">${icon(I.plus)}Registrar receita</button>
-    <button class="btn" data-act="ir" data-v="planejamento">Planejar dias 10 e 20</button>
-    <button class="btn" data-act="ir" data-v="relatorios">Consultar relatórios</button></div>
   <div class="grid2">
     <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
     <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillP(d.periodo)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>

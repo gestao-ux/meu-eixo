@@ -41,4 +41,4 @@ Site estático (HTML, CSS e JavaScript) com Supabase para banco de dados, login 
 
 ## Etapas
 1–3 ✔ Identidade, banco, receitas, despesas, parcelas, recorrências, dias 10 e 20, orçamento, contas e espaços compartilhados
-4 Leitura de comprovantes · 5 Perfil alimentar · 6 Cardápios e marmitas · 7 Preços de Cuiabá · 8 Lista de compras e estoque · 9 Comprovantes → histórico alimentar · 10 ✔ Metas: quitar dívidas e reduzir o crédito (atualização `007_dividas_metas.sql`) · 11 Relatório mensal automático · 12 Testes finais
+4 Leitura de comprovantes · 5 a 8 (alimentação, cardápios, lista de compras, despensa) retirados do site em 19/10/2026; dados mantidos no banco · 9 Cupom do mercado → despesas por categoria · 10 ✔ Metas: quitar dívidas e reduzir o crédito (atualização `007_dividas_metas.sql`) · 11 Relatório mensal automático · 12 Testes finais

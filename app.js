@@ -55,10 +55,6 @@ const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
   {id:'financeiro',t:'Financeiro',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
   {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
-  {id:'alimentacao',t:'Alimentação',ic:'M7 3v8a3 3 0 0 0 3 3v7M7 3v5M10 3v5M17 3c-2 2-2 6 0 8v10'},
-  {id:'cardapios',t:'Cardápios e marmitas',ic:'M4 9h16v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3zM8 9V6h8v3'},
-  {id:'compras',t:'Lista de compras',ic:'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01'},
-  {id:'despensa',t:'Despensa e estoque',ic:'M4 4h16v6H4zM4 10h16v10H4zM10 14h4',soon:8},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
   {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01'},
   {id:'config',t:'Configurações',ic:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z'}
@@ -186,12 +182,10 @@ async function abrirEspaco(id){
   tabs.forEach((t,i)=>aplicar(t,res[i]));
   S.canal=sb.channel('espaco-'+id);
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
-  S.canal.on('postgres_changes',{event:'*',schema:'public',table:'planos_alimentares',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
-  S.canal.on('postgres_changes',{event:'*',schema:'public',table:'listas_compra',filter:'espaco_id=eq.'+id},()=>carregarAlimentacaoEspaco());
   for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
   S.canal.subscribe();
   for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
-  S.planos=undefined; carregarAlimentacaoEspaco(); carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas();
+  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas();
   S.fase='pronto'; render();
 }
 async function entrar(session){
@@ -199,7 +193,7 @@ async function entrar(session){
   try{
     await carregarEspacos();
     if(!S.espacos.some(e=>e.tipo==='pessoal')){ chk(await sb.rpc('garantir_espaco_pessoal')); await carregarEspacos(); }
-    const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{}; carregarPerfilAlimentar().then(schedule);
+    const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{}; S.perfilAl=null;
     const salvo=ls.get('meuEixo.espaco'); const alvo=S.espacos.find(e=>e.id===salvo)||S.espacos[0];
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
@@ -228,9 +222,9 @@ function render(){
   if(S.fase==='auth'){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=vAuth(); setTimeout(()=>{ const i=v.querySelector('input'); i&&i.focus(); },30); return; }
   renderNav();
   const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
-  $('#monthNav').hidden = S.view==='config' || S.view==='alimentacao';
-  document.querySelector('.fab').hidden = ['alimentacao','cardapios','compras'].includes(S.view);
-  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,alimentacao:vAlimentacao,cardapios:vCardapios,compras:vCompras,metas:vMetas};
+  $('#monthNav').hidden = S.view==='config';
+  document.querySelector('.fab').hidden = false;
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,metas:vMetas};
   v.innerHTML = (views[S.view]||vRoadmap)();
   ls.set('meuEixo.view',S.view);
   if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
@@ -339,8 +333,7 @@ function vInicio(){
     <section class="panel"><h3>Composição das despesas</h3><div class="list">${linha('Despesas fixas',money(rs.fixas))}${linha('Despesas variáveis',money(rs.variaveis))}${linha('Parcelas neste mês',money(rs.parcelas))}${linha('Parcelas a pagar (todos os meses)',money(sum(parcelasFuturas(),d=>d.valor)))}</div></section>
     <section class="panel"><h3>Alimentação no mês</h3><div class="list">${linha('Orçamento alimentar',orcAlim?money(orcAlim):'<span class="muted small">não definido</span>')}${linha('Gasto com alimentação',money(gAlim))}${linha('Marmitas prontas',money(marm))}</div>
 </section>
-  </div>
-  ${S.planos?.[ym]?`<section><div class="section-head"><h2>Alimentação: gasto e economia</h2><p>${mesLabel(ym)}</p><div class="right"><button class="btn sm" data-act="ir" data-v="compras">Lista de compras</button></div></div>${painelEconomia(ym)}</section>`:''}`;
+  </div>`;
 }
 
 function vFinanceiro(){
@@ -463,12 +456,7 @@ function vConfig(){
     <div class="actions"><button class="btn" data-act="exportar">${icon(I.down)}Exportar dados do espaço (JSON)</button>${dono?`<button class="btn danger" data-act="apagarTudo">Excluir todos os dados do espaço</button>`:''}<button class="btn danger" data-act="excluirConta">Excluir minha conta</button></div></section>`;
 }
 
-const ROADMAP = {
-  alimentacao:{e:5,t:'Seu perfil alimentar e o catálogo de ingredientes',l:['Questionário inicial: rotina, horários, preferências, restrições, equipamentos, tempo para cozinhar e orçamento','Catálogo por categorias com unidade, informação nutricional, preço de referência e preço pago','Seleção livre de alimentos, com sugestões que respeitam o seu perfil','Sem diagnóstico de saúde: as sugestões não substituem um nutricionista']},
-  cardapios:{e:6,t:'Cardápios e plano de produção das marmitas',l:['Cardápio diário, semanal e mensal montado com as suas escolhas','Quantidade de porções, ingredientes, ordem e tempo de preparo','Divisão entre geladeira e freezer seguindo boas práticas de conservação','Comparação de cenários: custo por porção e economia de cada opção']},
-  compras:{e:8,t:'Lista de compras gerada a partir do cardápio',l:['Quantidades necessárias convertidas em embalagens comerciais','Desconto automático do que já existe na despensa','Custo estimado com preços pesquisados em Cuiabá e o seu histórico','Ao finalizar, os comprovantes comparam o estimado com o pago']},
-  despensa:{e:8,t:'Despensa e estoque doméstico',l:['Entrada por registro manual, comprovante confirmado ou lista de compras','Baixa de estoque apenas com a sua confirmação de uso','Produtos próximos do vencimento e receitas para aproveitá-los']}
-};
+const ROADMAP = {};
 function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
   return `<div class="roadmap"><span class="eyebrow">Etapa ${r.e} do plano</span><h2>${r.t}</h2><ul>${r.l.map(x=>`<li>${x}</li>`).join('')}</ul><p class="note" style="margin:0">Este módulo usa o mesmo banco de dados do Financeiro. Quando for ativado, as compras de alimentação já registradas nas categorias marcadas como alimentação entram no histórico.</p></div>`; }
 

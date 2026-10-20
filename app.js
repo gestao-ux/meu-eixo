@@ -199,6 +199,7 @@ async function entrar(session){
     await carregarEspacos();
     if(!S.espacos.some(e=>e.tipo==='pessoal')){ chk(await sb.rpc('garantir_espaco_pessoal')); await carregarEspacos(); }
     const p=chk(await sb.from('perfis').select('nome').eq('id',S.user.id).maybeSingle()); S.perfil=p||{}; S.perfilAl=null;
+    sb.from('perfis').select('foto').eq('id',S.user.id).maybeSingle().then(({data,error})=>{ S.fotoOk=!error; if(data?.foto){ S.perfil={...S.perfil,foto:data.foto}; schedule(); } });
     const salvo=ls.get('meuEixo.espaco'); const alvo=S.espacos.find(e=>e.id===salvo)||S.espacos[0];
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
@@ -218,6 +219,13 @@ const primeiroNome = () => meuNome().split(/\s+/)[0] || '';
 const iniciais = n => { const p=(n||'').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0]||'')+(p.length>1?p[p.length-1][0]:'')).toUpperCase(); };
 const minhaFrase = () => (S.user?.user_metadata?.frase||'').trim() || FRASE_PADRAO;
 const minhaCor = () => CORES_AV[S.user?.user_metadata?.cor]?.[1] || CORES_AV.salvia[1];
+/* reduz a foto no próprio aparelho: recorte quadrado central, 256 px, JPEG */
+function reduzirFoto(file){ return new Promise((ok,erro)=>{ if(!file||!/^image\//.test(file.type||'image/')) return erro(new Error('Escolha um arquivo de imagem.'));
+  const url=URL.createObjectURL(file), img=new Image();
+  img.onload=()=>{ const L=256, m=Math.min(img.naturalWidth,img.naturalHeight), c=document.createElement('canvas'); c.width=c.height=L;
+    const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(img,(img.naturalWidth-m)/2,(img.naturalHeight-m)/2,m,m,0,0,L,L); URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg',0.85)); };
+  img.onerror=()=>{ URL.revokeObjectURL(url); erro(new Error('Não consegui abrir esta imagem. Tente uma foto em JPG ou PNG.')); }; img.src=url; }); }
+const avatarHtml = (foto, ini, cor, tam=48) => `<span class="avatar-pv" style="width:${tam}px;height:${tam}px;background:${cor}">${foto?`<img src="${esc(foto)}" alt="">`:esc(ini||'·')}</span>`;
 function saudacao(){ const h=+new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Cuiaba',hour:'numeric',hourCycle:'h23'}).format(new Date()); return h<5?'Boa noite':h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'; }
 const dataExtenso = () => { const t=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Cuiaba',weekday:'long',day:'numeric',month:'long'}).format(new Date()); return t.charAt(0).toUpperCase()+t.slice(1); };
 
@@ -228,7 +236,7 @@ function renderNav(){
   const nome=meuNome(), ini=iniciais(nome);
   $('#brandNome').textContent = nome || 'Meu Eixo';
   $('#brandFrase').textContent = minhaFrase();
-  $('#avatar').innerHTML = ini ? esc(ini) : '<img src="icone.svg" width="22" height="22" alt="">';
+  $('#avatar').innerHTML = S.perfil?.foto ? `<img class="foto" src="${esc(S.perfil.foto)}" alt="">` : ini ? esc(ini) : '<img src="icone.svg" width="22" height="22" alt="">';
   $('#brand').style.setProperty('--av', minhaCor());
   $('#spacePick').hidden = S.espacos.length<=1;
 }
@@ -1239,18 +1247,24 @@ const acoes = {
   editarNome: () => acoes.personalizar(),
   personalizar: () => { fecharMenu(); const corAtual=S.user?.user_metadata?.cor||'salvia';
     abrirModal(`<form data-form="quick">${head('Personalizar')}
-      <div class="prev-perfil" id="pvPerfil"><span class="avatar" style="width:48px;height:48px;border-radius:99px;display:grid;place-items:center;color:#fff;font-family:var(--f-display);font-size:18px;background:${minhaCor()}" id="pvAv">${esc(iniciais(meuNome())||'·')}</span><div><b id="pvNome" style="font-family:var(--f-display);font-size:18px;font-weight:500">${esc(meuNome()||'Seu nome')}</b><div class="small muted" id="pvFrase">${esc(minhaFrase())}</div></div></div>
+      <div class="prev-perfil" id="pvPerfil"><span id="pvAv">${avatarHtml(S.perfil?.foto,iniciais(meuNome()),minhaCor(),64)}</span><div><b id="pvNome" style="font-family:var(--f-display);font-size:18px;font-weight:500">${esc(meuNome()||'Seu nome')}</b><div class="small muted" id="pvFrase">${esc(minhaFrase())}</div></div></div>
+      <div class="foto-acoes"><button type="button" class="btn sm" data-act="pzFoto">${icon(I.foto)}${S.perfil?.foto?'Trocar foto':'Escolher foto'}</button><button type="button" class="btn sm ghost" data-act="pzSemFoto" id="pzSemFoto" ${S.perfil?.foto?'':'hidden'}>Remover foto</button><input type="file" id="pzArq" accept="image/*" hidden><input type="hidden" name="foto" value="manter"></div>
       <div class="form-grid">
         <div class="field full"><label for="pzN">Seu nome</label><input id="pzN" name="n" required maxlength="60" autocomplete="name" value="${esc(meuNome())}" placeholder="Como quer ser chamada"></div>
         <div class="field full"><label for="pzF">Sua frase</label><input id="pzF" name="f" maxlength="80" value="${esc(S.user?.user_metadata?.frase||'')}" placeholder="${esc(FRASE_PADRAO)}"></div>
         <div class="field full"><label>Cor</label><div class="cores" id="pzCores">${Object.entries(CORES_AV).map(([k,[t,h]])=>`<button type="button" style="--c:${h}" aria-label="${t}" title="${t}" aria-pressed="${k===corAtual}" data-act="pzCor" data-v="${k}"></button>`).join('')}</div><input type="hidden" name="cor" value="${corAtual}"></div>
       </div><p class="note">Aparecem no menu e na saudação do Início. A frase é opcional.</p>${rodape('Salvar')}</form>`,
     async f=>{ const n=f.elements.n.value.trim(), fr=f.elements.f.value.trim(), cor=f.elements.cor.value; if(!n) return 'Informe o seu nome.';
-      chk(await sb.from('perfis').upsert({id:S.user.id,nome:n})); S.perfil={...S.perfil,nome:n};
+      const fv=f.elements.foto.value, foto = fv==='manter' ? S.perfil?.foto : (fv||null);
+      if(fv!=='manter' && S.fotoOk===false) return 'Para salvar a foto, execute a atualização 010_foto_perfil.sql no Supabase (SQL Editor).';
+      chk(await sb.from('perfis').upsert({id:S.user.id,nome:n,...(fv!=='manter'?{foto}:{})})); S.perfil={...S.perfil,nome:n,foto};
       const r=chk(await sb.auth.updateUser({data:{nome:n,frase:fr,cor}})); if(r?.user) S.user=r.user;
       render(); toast('Perfil personalizado.'); },
-    root=>{ const f=root.querySelector('form'); const pv=()=>{ const n=f.elements.n.value.trim(); root.querySelector('#pvNome').textContent=n||'Seu nome'; root.querySelector('#pvAv').textContent=iniciais(n)||'·'; root.querySelector('#pvFrase').textContent=f.elements.f.value.trim()||FRASE_PADRAO; }; f.addEventListener('input',pv); }); },
-  pzCor: el => { const f=el.closest('form'); f.elements.cor.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); f.querySelector('#pvAv').style.background=CORES_AV[el.dataset.v][1]; },
+    root=>{ const f=root.querySelector('form'); const pv=()=>{ const n=f.elements.n.value.trim(); root.querySelector('#pvNome').textContent=n||'Seu nome'; const fv=f.elements.foto.value, ft=fv==='manter'?S.perfil?.foto:fv; root.querySelector('#pvAv').innerHTML=avatarHtml(ft,iniciais(n),CORES_AV[f.elements.cor.value]?.[1]||minhaCor(),64); root.querySelector('#pvFrase').textContent=f.elements.f.value.trim()||FRASE_PADRAO; }; f.addEventListener('input',pv); f._pv=pv;
+      root.querySelector('#pzArq').addEventListener('change',async e=>{ const file=e.target.files?.[0]; if(!file) return; try{ f.elements.foto.value=await reduzirFoto(file); root.querySelector('#pzSemFoto').hidden=false; pv(); }catch(x){ $('#formErr').textContent=x.message; } }); }); },
+  pzCor: el => { const f=el.closest('form'); f.elements.cor.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); f._pv&&f._pv(); },
+  pzFoto: () => { const i=$('#pzArq'); if(i){ i.value=''; i.click(); } },
+  pzSemFoto: el => { const f=el.closest('form'); f.elements.foto.value=''; el.hidden=true; f._pv&&f._pv(); },
   trocarSenha: () => abrirModal(`<form data-form="quick">${head('Alterar senha')}<div class="form-grid"><div class="field"><label for="qS1">Nova senha</label><input id="qS1" name="s1" type="password" autocomplete="new-password" minlength="8" required></div><div class="field"><label for="qS2">Repita a nova senha</label><input id="qS2" name="s2" type="password" autocomplete="new-password" minlength="8" required></div></div>${rodape('Alterar senha')}</form>`,
     async f=>{ if(f.elements.s1.value.length<8) return 'Use pelo menos 8 caracteres.'; if(f.elements.s1.value!==f.elements.s2.value) return 'As duas senhas não são iguais.'; chk(await sb.auth.updateUser({password:f.elements.s1.value})); toast('Senha alterada.'); }),
   criarEspaco: () => abrirModal(`<form data-form="quick">${head('Criar espaço compartilhado')}<p class="muted" style="margin:0">Use para finanças da casa ou da família. Ele começa com as categorias padrão e você recebe um código para convidar outras pessoas.</p><div class="field"><label for="qN">Nome do espaço</label><input id="qN" name="n" required maxlength="60" placeholder="Ex.: Casa"></div>${rodape('Criar espaço')}</form>`,

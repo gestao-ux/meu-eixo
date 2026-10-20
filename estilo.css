@@ -438,3 +438,9 @@ form[data-form="rapidoNovo"],form[data-form="cupom"]{display:flex;flex-direction
   .col{min-width:34px;flex-basis:34px}
   .col-v{font-size:9.5px}
 }
+
+.brand .avatar img.foto{filter:none;width:100%;height:100%;object-fit:cover;border-radius:99px}
+.brand .avatar{overflow:hidden}
+.avatar-pv{border-radius:99px;display:grid;place-items:center;color:#fff;font-family:var(--f-display);font-size:20px;overflow:hidden;flex:none}
+.avatar-pv img{width:100%;height:100%;object-fit:cover}
+.foto-acoes{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}

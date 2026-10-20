@@ -53,7 +53,7 @@ const S = { rec:[], desp:[], cats:[], recor:[], orc:{}, cfg:{}, espacos:[], esp:
 
 const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
-  {id:'financeiro',t:'Financeiro',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
+  {id:'financeiro',t:'Lançamentos',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
   {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
   {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01'},
@@ -354,7 +354,7 @@ function vFinanceiro(){
   </div>
   <section>
     <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${!isD}" data-act="tab" data-v="receitas">Receitas (${R.length})</button></div>
-    <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}${isD?'Nova despesa':'Nova receita'}</button></div></div>
+    <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
     ${isD?`<div class="filters">
       <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit"><option value="">Todas</option>${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit===k?'selected':''}>${v}</option>`).join('')}</select></div>
       <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat"><option value="">Todas</option>${S.cats.map(c=>`<option value="${c.id}" ${f.cat===c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
@@ -464,7 +464,7 @@ function vConfig(){
 
 const ROADMAP = {};
 function vRoadmap(){ const r=ROADMAP[S.view]; if(!r) return '';
-  return `<div class="roadmap"><span class="eyebrow">Etapa ${r.e} do plano</span><h2>${r.t}</h2><ul>${r.l.map(x=>`<li>${x}</li>`).join('')}</ul><p class="note" style="margin:0">Este módulo usa o mesmo banco de dados do Financeiro. Quando for ativado, as compras de alimentação já registradas nas categorias marcadas como alimentação entram no histórico.</p></div>`; }
+  return `<div class="roadmap"><span class="eyebrow">Etapa ${r.e} do plano</span><h2>${r.t}</h2><ul>${r.l.map(x=>`<li>${x}</li>`).join('')}</ul><p class="note" style="margin:0">Este módulo usa o mesmo banco de dados de Lançamentos. Quando for ativado, as compras de alimentação já registradas nas categorias marcadas como alimentação entram no histórico.</p></div>`; }
 
 /* ---------- modais ---------- */
 let modalSubmit=null;
@@ -702,7 +702,7 @@ function formReceita(r){
       <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
       <div class="field full"><label>Tipo de receita</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!r.recorrenciaId}" data-act="modoValor" data-v="variavel">Variável</button><button type="button" aria-pressed="${!!r.recorrenciaId}" data-act="modoValor" data-v="fixa">Fixa (todo mês)</button></div><input type="hidden" name="modoValor" value="${r.recorrenciaId?'fixa':'variavel'}"></div>
       <p class="note full" data-show="fixa" style="margin:0">${r.recorrenciaId?'Receita fixa: entra em todos os meses com o mesmo valor e dia.':'Entra automaticamente em todos os meses a partir da data prevista, com o mesmo valor e dia. Os próximos 12 meses ficam sempre lançados.'}</p>
-      ${r.recorrenciaId?`<label class="check full" data-show="fixa"><input type="checkbox" name="propagar" checked> Aplicar descrição, valor, dia e período também aos próximos meses</label><p class="note full" data-show="variavel" style="margin:0">Ao mudar para variável, a receita deixa de repetir: os meses futuros ainda não recebidos saem do Financeiro.</p>`:''}
+      ${r.recorrenciaId?`<label class="check full" data-show="fixa"><input type="checkbox" name="propagar" checked> Aplicar descrição, valor, dia e período também aos próximos meses</label><p class="note full" data-show="variavel" style="margin:0">Ao mudar para variável, a receita deixa de repetir: os meses futuros ainda não recebidos saem de Lançamentos.</p>`:''}
     </div></div>
   <div class="grupo"><span class="grupo-t">Previsto</span>
     <div class="form-grid">
@@ -866,7 +866,7 @@ function vMetaDividas(){
   const A=analiseDividas(), {base,plano,meta,est}=A, ym=hoje().slice(0,7), rs=resumo(ym);
   const semNada=!A.e.dividas.length && !A.parcs.length;
   const quitadas=(S.dividas||[]).filter(d=>d.quitada);
-  if(semNada) return `<div class="empty"><strong>Nenhuma dívida em aberto</strong>As compras parceladas do Financeiro aparecem aqui sozinhas. Cadastre também cartão no rotativo, cheque especial, empréstimos, acordos ou dívidas com pessoas para montar o plano de quitação.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novaDivida">${icon(I.plus)}Cadastrar dívida</button></div></div>
+  if(semNada) return `<div class="empty"><strong>Nenhuma dívida em aberto</strong>As compras parceladas de Lançamentos aparecem aqui sozinhas. Cadastre também cartão no rotativo, cheque especial, empréstimos, acordos ou dívidas com pessoas para montar o plano de quitação.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novaDivida">${icon(I.plus)}Cadastrar dívida</button></div></div>
     ${quitadas.length?blocoQuitadas(quitadas):''}`;
   const compMes = r2(sum(despMes(ym).filter(d=>ativa(d)&&((+d.parcelas||1)>1||d.dividaId)),d=>d.valor) + sum(pagamentosFaltando(ym),d=>d.parcela));
   const pctRenda = rs.recEsp>0 ? compMes/rs.recEsp*100 : null;
@@ -876,8 +876,8 @@ function vMetaDividas(){
   const variacao = ant ? atualEvo-ant : null;
   const falt=pagamentosFaltando(S.mes);
   return `
-  ${falt.length?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(S.mes)}: ${falt.map(d=>esc(d.nome)).join(', ')}.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="lancarPagDiv">Lançar no Financeiro</button></div></div></div>`:''}
-  <section><div class="section-head"><h2>Situação das dívidas</h2><p>Hoje, com os lançamentos do Financeiro</p></div>
+  ${falt.length?`<div class="alert"><span class="dot"></span><div style="flex:1"><p>${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(S.mes)}: ${falt.map(d=>esc(d.nome)).join(', ')}.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="lancarPagDiv">Lançar agora</button></div></div></div>`:''}
+  <section><div class="section-head"><h2>Situação das dívidas</h2><p>Hoje, com os seus lançamentos</p></div>
     <div class="kpis">
       <div class="kpi hero"><span class="lbl">Total devido</span><span class="val">${money(A.total)}</span><span class="sub">${money(A.totalCad)} em dívidas · ${money(A.totalParc)} em parcelas</span></div>
       <div class="kpi"><span class="lbl">Comprometido em ${MESES[+ym.slice(5)-1]}</span><span class="val ${pctRenda!==null&&pctRenda>30?'neg':''}">${money(compMes)}</span><span class="sub">${pctRenda!==null?`${pct(pctRenda)} da receita prevista · referência prudente: até 30%`:'cadastre as receitas do mês para ver o peso na renda'}</span></div>
@@ -891,9 +891,9 @@ function vMetaDividas(){
       :`<p class="small muted">O histórico aparece com os lançamentos dos próximos meses.</p>`}
   </section>
   <section><div class="section-head"><h2>Suas dívidas</h2><p>Saldo estimado com juros e pagamentos registrados</p><div class="right"><button class="btn primary" data-act="novaDivida">${icon(I.plus)}Nova dívida</button></div></div>
-    ${A.e.dividas.length||dividasAtivas().length?`<div class="list">${dividasAtivas().map(rowDivida).join('')}</div>`:`<p class="small muted">Nenhuma dívida cadastrada além das parcelas do Financeiro. Cadastre cartão no rotativo, cheque especial, empréstimos e acordos para incluí-los no plano.</p>`}
+    ${A.e.dividas.length||dividasAtivas().length?`<div class="list">${dividasAtivas().map(rowDivida).join('')}</div>`:`<p class="small muted">Nenhuma dívida cadastrada além das parcelas de Lançamentos. Cadastre cartão no rotativo, cheque especial, empréstimos e acordos para incluí-los no plano.</p>`}
   </section>
-  ${A.parcs.length?`<section class="panel"><h3>Compras parceladas do Financeiro</h3><p class="small muted" style="margin:-6px 0 10px">Entram no plano pelo calendário das parcelas. Quando uma termina, o valor dela passa para a próxima dívida.</p><div class="list">${A.parcs.map(rowParcelamento).join('')}</div></section>`:''}
+  ${A.parcs.length?`<section class="panel"><h3>Compras parceladas de Lançamentos</h3><p class="small muted" style="margin:-6px 0 10px">Entram no plano pelo calendário das parcelas. Quando uma termina, o valor dela passa para a próxima dívida.</p><div class="list">${A.parcs.map(rowParcelamento).join('')}</div></section>`:''}
   ${quitadas.length?blocoQuitadas(quitadas):''}
   <p class="note">Os valores são estimativas para decidir. O saldo oficial é o informado pelo credor: sempre que receber um extrato, use “Atualizar saldo”.</p>`;
 }
@@ -921,7 +921,7 @@ function blocoPlano(A){
       ${prazoYm?`<div class="kpi"><span class="lbl">Prazo desejado · ${esc(mesCurto(prazoYm))}</span><span class="val ${prazoOk===false?'neg':prazoOk?'pos':''}">${paraPrazo?money(paraPrazo):'—'}</span><span class="sub">${paraPrazo?`por mês para quitar até lá${prazoOk?' · o plano atual cumpre':prazoOk===false?` · faltam ${money(paraPrazo-orc)} por mês`:''}`:'prazo curto demais para os valores atuais'}</span></div>`:''}
     </div>
     ${ordem.length?`<h4 class="sub-h">Ordem de quitação</h4><ol class="ordem">${ordem.map((d,i)=>`<li><span class="n">${i+1}</span><div><b>${esc(d.nome)}</b><span class="small muted">${money(d.saldo)} · ${d.jurosMes?String(d.jurosMes).replace('.',',')+'% a.m.':'sem juros'}${d.minimo?` · mínimo ${money(d.minimo)}`:''}</span></div><span class="fim">${fimDe(d.id)?'quitada em '+esc(mesCurto(fimDe(d.id))):'—'}</span></li>`).join('')}</ol>
-      <p class="small muted" style="margin:6px 0 0">Todo mês: pague o mínimo de cada dívida e as parcelas do Financeiro; o que sobrar dos ${money(orc)} vai para a primeira dívida da lista e, quando ela acabar, para a seguinte.</p>`:''}
+      <p class="small muted" style="margin:6px 0 0">Todo mês: pague o mínimo de cada dívida e as parcelas de Lançamentos; o que sobrar dos ${money(orc)} vai para a primeira dívida da lista e, quando ela acabar, para a seguinte.</p>`:''}
     ${serie.length>1?`<h4 class="sub-h">Saldo devedor previsto</h4>${colunas(serie.filter((x,i)=>i%passo===0||i===serie.length-1).map(x=>({l:mesCurto(x.mes),v:x.total,titulo:`${mesLabel(x.mes)}: ${money(x.total)}`})),{rotulo:'Saldo devedor previsto mês a mês',compacto:true})}`:''}
   </section>`;
 }
@@ -995,7 +995,7 @@ function formDivida(d){
     <div class="field"><label for="dvF">Forma de pagamento</label><select id="dvF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento||'Pix')}</select></div>
     <div class="field"><label for="dvK">Chave Pix (opcional)</label><input id="dvK" name="chave" maxlength="140" autocomplete="off" value="${esc(d.chavePix)}"></div>
     <div class="field full"><label for="dvO">Observação</label><input id="dvO" name="obs" maxlength="200" value="${esc(d.obs)}"></div></div>
-    <p class="note">Os juros mensais estão no extrato, na fatura ou no contrato (CET ao mês). Sem juros, deixe em branco. Compras parceladas já lançadas no Financeiro não precisam ser cadastradas aqui.</p>${rodape(novo?'Cadastrar dívida':'Salvar')}</form>`;
+    <p class="note">Os juros mensais estão no extrato, na fatura ou no contrato (CET ao mês). Sem juros, deixe em branco. Compras parceladas já lançadas em Lançamentos não precisam ser cadastradas aqui.</p>${rodape(novo?'Cadastrar dívida':'Salvar')}</form>`;
 }
 function lerDivida(f){
   const g=n=>f.elements[n].value.trim(), saldo=parseValor(g('saldo')), juros=g('juros')?parseValor(g('juros')):0, parcela=g('parcela')?parseValor(g('parcela')):null, dia=g('dia')?+g('dia'):null;
@@ -1028,14 +1028,14 @@ const acoesMetas = {
     abrirModal(`<form data-form="quick">${head('Registrar pagamento')}<p class="muted" style="margin:0">${esc(dv.nome)} · saldo estimado ${money(s)}${pend?` · lançamento pendente de ${dataBR(pend.vencimento)}`:''}</p>
       <div class="form-grid"><div class="field"><label for="pgV">Valor pago (R$)</label><input id="pgV" name="v" inputmode="decimal" required value="${fmtInput(pend?.valor||Math.min(+dv.parcela||s,s))}"></div><div class="field"><label for="pgD">Pago em</label><input id="pgD" name="d" type="date" required value="${hoje()}"></div>
       <div class="field"><label for="pgF">Forma de pagamento</label><select id="pgF" name="forma">${opts(FORMAS.map(x=>[x,x]),pend?.formaPagamento||dv.formaPagamento||'Pix')}</select></div></div>
-      <p class="note">${pend?'O lançamento pendente do Financeiro será marcado como pago.':'Vira uma despesa paga em “Dívidas e parcelas” no Financeiro, ligada a esta dívida.'}</p>${rodape('Registrar pagamento')}</form>`,
+      <p class="note">${pend?'O lançamento pendente de Lançamentos será marcado como pago.':'Vira uma despesa paga em “Dívidas e parcelas” em Lançamentos, ligada a esta dívida.'}</p>${rodape('Registrar pagamento')}</form>`,
     async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value, forma=f.elements.forma.value; if(!(v>0)) return 'Informe o valor pago.';
       if(pend) await atualizar('despesas',pend.id,{situacao:'paga',valor:r2(v),dataPagamento:d,formaPagamento:forma});
       else await inserir('despesas',{descricao:'Pagamento · '+dv.nome,valor:r2(v),categoria:catDividas(),comportamento:'fixa',formaPagamento:forma,vencimento:d,dataPagamento:d,situacao:'paga',periodo:dv.periodo||'',parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''});
       const resta=saldoDiv(dv);
       if(resta<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:d}); toast('Pagamento registrado. Dívida quitada!'); } else toast(`Pagamento registrado. Saldo estimado: ${money(resta)}.`); }); },
   delDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return; const n=S.desp.filter(x=>x.dividaId===dv.id).length;
-    confirmar('Excluir dívida',`Excluir “${esc(dv.nome)}”?${n?` Os ${n} lançamentos de pagamento continuam no Financeiro.`:''} Se ela foi paga, prefira “Atualizar saldo” com zero para guardar o histórico.`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('dividas').delete().eq('id',dv.id).eq('espaco_id',S.esp)); await carregarMetas(); await recarregar('despesas'); toast('Dívida excluída.'); }}]); },
+    confirmar('Excluir dívida',`Excluir “${esc(dv.nome)}”?${n?` Os ${n} lançamentos de pagamento continuam em Lançamentos.`:''} Se ela foi paga, prefira “Atualizar saldo” com zero para guardar o histórico.`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('dividas').delete().eq('id',dv.id).eq('espaco_id',S.esp)); await carregarMetas(); await recarregar('despesas'); toast('Dívida excluída.'); }}]); },
   reabrirDivida: async el => { await gravarDivida(el.dataset.id,{quitada:false,quitadaEm:null}); toast('Dívida reaberta.'); },
   copiarPixDiv: async el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv?.chavePix) return;
     try{ await navigator.clipboard.writeText(dv.chavePix); toast('Chave Pix copiada. Cole no app do banco.'); }catch(_){ abrirModal(`<div>${head('Chave Pix')}</div><p class="code" style="word-break:break-all;margin:0">${esc(dv.chavePix)}</p>`,null); } },
@@ -1044,7 +1044,7 @@ const acoesMetas = {
       toast(`${falt.length} ${falt.length>1?'pagamentos lançados':'pagamento lançado'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
   estrategia: async el => { const m=metaDe('quitar_dividas'); await salvarMeta('quitar_dividas',{dados:{...(m?.dados||{}),estrategia:el.dataset.v}}); },
   metaDividas: () => { const m=metaDe('quitar_dividas'), e=entradaPlano(null), min=MT().minimoMensal(e);
-    abrirModal(`<form data-form="quick">${head('Meta: quitar as dívidas')}<p class="muted" style="margin:0">Os pagamentos mínimos e as parcelas do Financeiro somam <b>${money(min)}</b> neste mês. Tudo o que você destinar acima disso acelera a quitação.</p>
+    abrirModal(`<form data-form="quick">${head('Meta: quitar as dívidas')}<p class="muted" style="margin:0">Os pagamentos mínimos e as parcelas de Lançamentos somam <b>${money(min)}</b> neste mês. Tudo o que você destinar acima disso acelera a quitação.</p>
       <div class="form-grid"><div class="field"><label for="mdV">Valor por mês para dívidas (R$)</label><input id="mdV" name="v" inputmode="decimal" required value="${fmtInput(m?.valorAlvo??min)}"></div>
       <div class="field"><label for="mdP">Quero quitar até (opcional)</label><input id="mdP" name="p" type="month" value="${m?.prazo?m.prazo.slice(0,7):''}" min="${hoje().slice(0,7)}"></div>
       <div class="field full"><label>Ordem de quitação</label><div class="seg" id="segValor">${Object.entries(ESTRATEGIAS).map(([k,v])=>`<button type="button" aria-pressed="${(m?.dados?.estrategia||'avalanche')===k}" data-act="modoValor" data-v="${k}">${v.t}</button>`).join('')}</div><input type="hidden" name="modoValor" value="${m?.dados?.estrategia||'avalanche'}"></div></div>
@@ -1068,7 +1068,7 @@ function alertasMetas(ym){
   const crescem=dividasAtivas().filter(d=>+d.jurosMes>0 && +d.parcela>0 && +d.parcela<=MT().jurosDoMes(saldoDiv(d),d.jurosMes));
   if(crescem.length) a.push({k:'danger',t:`${crescem.map(d=>esc(d.nome)).join(', ')}: o pagamento mensal não cobre os juros, então a dívida cresce.`,h:'Priorize esta dívida no plano de quitação ou procure renegociar a taxa.'});
   const falt=pagamentosFaltando(ym);
-  if(falt.length) a.push({k:'',t:`${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(ym)}.`,h:'Use “Lançar no Financeiro” em Metas para incluí-los nos dias 10 e 20.'});
+  if(falt.length) a.push({k:'',t:`${falt.length} ${falt.length>1?'pagamentos de dívidas ainda não foram lançados':'pagamento de dívida ainda não foi lançado'} em ${mesLabel(ym)}.`,h:'Use “Lançar agora” em Metas para incluí-los nos dias 10 e 20.'});
   return a;
 }
 
@@ -1196,7 +1196,7 @@ const acoes = {
       <div class="field"><label for="tO">Origem</label><select id="tO" name="origem">${opts(ORIGENS.map(x=>[x,x]),t.origem||'Salário')}</select></div>
       <div class="field"><label for="tP">Período</label><select id="tP" name="periodo">${opts([['','Sem período'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (lança todo mês)</label></div>
-      <p class="note">A alteração vale para os meses ainda não recebidos, do atual em diante. Ao pausar, os meses futuros não recebidos saem do Financeiro.</p>${rodape('Salvar')}</form>`,
+      <p class="note">A alteração vale para os meses ainda não recebidos, do atual em diante. Ao pausar, os meses futuros não recebidos saem de Lançamentos.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
       const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,origem:f.elements.origem.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked};
       await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Receita fixa atualizada.'); });
@@ -1210,14 +1210,14 @@ const acoes = {
       <div class="field"><label for="tK">Chave Pix</label><input id="tK" name="chave" maxlength="140" autocomplete="off" value="${esc(t.chavePix)}"></div>
       <div class="field full"><label for="tCC">Pix copia e cola (opcional)</label><input id="tCC" name="copia" maxlength="600" autocomplete="off" value="${esc(t.pixCopiaCola)}"></div>
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (gera lançamento todo mês)</label></div>
-      <p class="note">A alteração vale para os lançamentos ainda não pagos deste mês em diante. Meses já pagos não mudam. Ao pausar, os meses futuros não pagos saem do Financeiro.</p>${rodape('Salvar')}</form>`,
+      <p class="note">A alteração vale para os lançamentos ainda não pagos deste mês em diante. Meses já pagos não mudam. Ao pausar, os meses futuros não pagos saem de Lançamentos.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
       const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()};
       await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Conta recorrente atualizada.'); }); },
   delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; const atual=hoje().slice(0,7), R=ehRecR(t), tab=R?'receitas':'despesas';
     const fut=lancsRec(t).filter(x=>!quitadoL(t,x) && ativa(x) && compL(t,x)>atual);
-    confirmar(R?'Excluir receita fixa':'Excluir conta fixa',`Excluir “${esc(t.descricao)}”?${fut.length?` Há ${fut.length} ${fut.length>1?'meses futuros lançados':'mês futuro lançado'} e ainda não ${R?'recebido':'pago'}${fut.length>1?'s':''}.`:''} Meses já ${R?'recebidos':'pagos'} continuam no Financeiro.`,
-      fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam no Financeiro.'); }},
+    confirmar(R?'Excluir receita fixa':'Excluir conta fixa',`Excluir “${esc(t.descricao)}”?${fut.length?` Há ${fut.length} ${fut.length>1?'meses futuros lançados':'mês futuro lançado'} e ainda não ${R?'recebido':'pago'}${fut.length>1?'s':''}.`:''} Meses já ${R?'recebidos':'pagos'} continuam em Lançamentos.`,
+      fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam em Lançamentos.'); }},
         {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover(tab,fut.map(x=>x.id)); await remover('recorrencias',t.id); toast(R?'Receita fixa encerrada.':'Conta fixa encerrada.'); }}]
       :[{t:'Excluir',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
   exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[]};

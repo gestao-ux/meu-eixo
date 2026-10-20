@@ -105,7 +105,12 @@ function periodo(ym,p){
 const parcelasFuturas = () => S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && d.situacao!=='paga');
 const orcamentoMes = ym => S.orc[ym]?.limites || {};
 const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),d=>d.valor);
-const recorrentesFaltando = ym => S.recor.filter(t=>t.ativo!==false && (t.inicio||'0000-00')<=ym && !(t.geradoAte && t.geradoAte>=ym) && !S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===ym));
+const ehRecR = t => t?.tipo==='receita';
+const recorD = () => S.recor.filter(t=>!ehRecR(t));
+const lancsRec = t => ehRecR(t) ? S.rec.filter(r=>r.recorrenciaId===t.id) : S.desp.filter(d=>d.recorrenciaId===t.id);
+const compL = (t,x) => ehRecR(t) ? compRec(x) : compDesp(x);
+const quitadoL = (t,x) => ehRecR(t) ? x.situacao==='recebida' : x.situacao==='paga';
+const recorrentesFaltando = ym => recorD().filter(t=>t.ativo!==false && (t.inicio||'0000-00')<=ym && !(t.geradoAte && t.geradoAte>=ym) && !S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===ym));
 
 function alertas(ym){
   const a=[], h=hoje();
@@ -291,7 +296,7 @@ function rowRec(r,o={}){
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const val = s==='recebida' ? `${money(r.valorRecebido)}${r2(r.valorRecebido)!==r2(r.valorPrevisto)?`<div class="small muted">previsto ${money(r.valorPrevisto)}</div>`:''}` : money(r.valorPrevisto);
-  return `<div class="row"><div><div class="t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(r.origem||'')}</span><span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(r.origem||'')}</span>${r.recorrenciaId?'<span class="pill">Todo mês</span>':''}<span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
 
@@ -449,9 +454,9 @@ function vConfig(){
       <div class="full actions"><button class="btn primary" type="submit">Salvar saldo</button></div></form></section>
   <section class="panel"><div class="section-head"><h3 style="margin:0">Categorias de despesa</h3><div class="right"><button class="btn sm primary" data-act="novaCat">${icon(I.plus)}Nova categoria</button></div></div>
     ${S.cats.length?`<div class="list">${S.cats.map(k=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(k.nome)}</div><div class="meta">${k.alimentacao?'<span class="pill paga">Conta como alimentação</span>':''}<span>${S.desp.filter(d=>d.categoria===k.id).length} lançamentos</span></div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editCat" data-id="${k.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delCat" data-id="${k.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<div class="empty"><strong>Nenhuma categoria</strong>Crie categorias como Moradia, Transporte e Supermercado.</div>`}</section>
-  <section class="panel"><h3>Contas fixas recorrentes</h3>
-    <p class="small muted" style="margin:0 0 10px">Modelos usados para lançar as contas fixas de cada mês. Alterações valem para os próximos lançamentos.</p>
-    ${S.recor.length?`<div class="list">${S.recor.map(t=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(t.descricao)}</div><div class="meta"><span>${esc(catNome(t.categoria))}</span><span>todo dia ${t.dia}</span>${pillP(t.periodo)}${t.ativo===false?'<span class="pill cancelada">Pausada</span>':''}</div></div><div class="v">${money(t.valor)}</div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editRecor" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delRecor" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<p class="small muted">Nenhuma conta recorrente. Marque “Repete todo mês” ao cadastrar uma despesa fixa.</p>`}</section>
+  <section class="panel"><h3>Receitas e contas fixas</h3>
+    <p class="small muted" style="margin:0 0 10px">Entram sozinhas em todos os meses, sempre 12 meses à frente. Alterações valem para os meses ainda não pagos ou recebidos.</p>
+    ${S.recor.length?`<div class="list">${[...S.recor].sort((a,b)=>(ehRecR(b)-ehRecR(a))||a.descricao.localeCompare(b.descricao,'pt')).map(t=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(t.descricao)}</div><div class="meta">${ehRecR(t)?'<span class="pill paga">Receita</span>':'<span class="pill">Despesa</span>'}<span>${ehRecR(t)?esc(t.origem||'Receita'):esc(catNome(t.categoria))}</span><span>todo dia ${t.dia}</span>${pillP(t.periodo)}${t.ativo===false?'<span class="pill cancelada">Pausada</span>':''}</div></div><div class="v ${ehRecR(t)?'pos':''}">${money(t.valor)}</div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editRecor" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delRecor" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<p class="small muted">Nenhuma conta recorrente. Marque “Repete todo mês” ao cadastrar uma despesa fixa.</p>`}</section>
   <section class="panel"><h3>Seus dados</h3>
     <p class="small muted" style="margin:0 0 14px">Espaço “${esc(e?.nome||'')}”: ${S.rec.length} receitas, ${S.desp.length} despesas, ${S.cats.length} categorias.</p>
     <div class="actions"><button class="btn" data-act="exportar">${icon(I.down)}Exportar dados do espaço (JSON)</button>${dono?`<button class="btn danger" data-act="apagarTudo">Excluir todos os dados do espaço</button>`:''}<button class="btn danger" data-act="excluirConta">Excluir minha conta</button></div></section>`;
@@ -695,6 +700,9 @@ function formReceita(r){
       <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
       <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
       <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
+      <div class="field full"><label>Tipo de receita</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!r.recorrenciaId}" data-act="modoValor" data-v="variavel">Variável</button><button type="button" aria-pressed="${!!r.recorrenciaId}" data-act="modoValor" data-v="fixa">Fixa (todo mês)</button></div><input type="hidden" name="modoValor" value="${r.recorrenciaId?'fixa':'variavel'}"></div>
+      <p class="note full" data-show="fixa" style="margin:0">${r.recorrenciaId?'Receita fixa: entra em todos os meses com o mesmo valor e dia.':'Entra automaticamente em todos os meses a partir da data prevista, com o mesmo valor e dia. Os próximos 12 meses ficam sempre lançados.'}</p>
+      ${r.recorrenciaId?`<label class="check full" data-show="fixa"><input type="checkbox" name="propagar" checked> Aplicar descrição, valor, dia e período também aos próximos meses</label><p class="note full" data-show="variavel" style="margin:0">Ao mudar para variável, a receita deixa de repetir: os meses futuros ainda não recebidos saem do Financeiro.</p>`:''}
     </div></div>
   <div class="grupo"><span class="grupo-t">Previsto</span>
     <div class="form-grid">
@@ -710,7 +718,7 @@ function formReceita(r){
   <div class="field"><label for="rObs">Observações</label><textarea id="rObs" name="obs" rows="2" maxlength="500">${esc(r.obs)}</textarea></div>
   ${rodape(novo?'Salvar receita':'Salvar alterações')}</form>`;
 }
-function wireReceita(root){ const f=root.querySelector('form'); const sync=()=>root.querySelectorAll('[data-show="rec"]').forEach(el=>el.hidden=f.elements.situacao.value!=='recebida'); f.addEventListener('change',sync); sync(); }
+function wireReceita(root){ const f=root.querySelector('form'); const sync=()=>{ root.querySelectorAll('[data-show="rec"]').forEach(el=>el.hidden=f.elements.situacao.value!=='recebida'); const fx=f.elements.modoValor?.value; root.querySelectorAll('[data-show="fixa"]').forEach(el=>el.hidden=fx!=='fixa'); root.querySelectorAll('[data-show="variavel"]').forEach(el=>el.hidden=fx!=='variavel'); }; f.addEventListener('change',sync); sync(); }
 async function salvarReceita(f){
   const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, vp=parseValor(fd.valorPrevisto);
   if(!fd.descricao.trim()) return 'Informe a descrição.';
@@ -720,7 +728,16 @@ async function salvarReceita(f){
   const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
   const arq=await enviarArquivo();
   const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
-  if(id){ const old=S.rec.find(x=>x.id===id); await atualizar('receitas',id,{...dados,conferido:true,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]); toast('Receita atualizada.'); }
+  const fixa=fd.modoValor==='fixa', ym=fd.dataPrevista.slice(0,7);
+  const modelo=()=>({tipo:'receita',descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),periodo,inicio:ym,geradoAte:ym,ativo:true});
+  if(id){ const old=S.rec.find(x=>x.id===id), t=old?.recorrenciaId?S.recor.find(x=>x.id===old.recorrenciaId):null;
+    let recorrenciaId=old?.recorrenciaId||null, msg='Receita atualizada.';
+    if(fixa && !t){ recorrenciaId=await inserirRecorrencia(modelo()); msg='Receita agora é fixa e foi lançada nos próximos meses.'; }
+    await atualizar('receitas',id,{...dados,...(recorrenciaId?{recorrenciaId}:{}),conferido:true,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]);
+    if(t && fixa && fd.propagar){ const novo={descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),periodo}; await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo,ym); msg='Receita atualizada neste e nos próximos meses.'; }
+    if(t && !fixa){ await aplicarModeloFuturo(t,{ativo:false},ym); await atualizar('recorrencias',t.id,{ativo:false}); msg='Receita deixou de repetir. Os meses futuros não recebidos foram retirados.'; }
+    await garantirRecorrentes(); toast(msg); }
+  else if(fixa){ const recorrenciaId=await inserirRecorrencia(modelo()); await inserir('receitas',{...dados,recorrenciaId}); await garantirRecorrentes(); toast('Receita fixa salva e lançada em todos os meses a partir deste.'); }
   else { await inserir('receitas',dados); toast('Receita salva.'); }
 }
 function abrirCat(c){
@@ -1060,45 +1077,53 @@ const HORIZONTE_REC = 11; // mês atual + 11 = 12 meses lançados à frente
 const linhaRecorrente = (t, ym) => ({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',
   vencimento:ym+'-'+String(Math.min(+t.dia||10,diasNoMes(ym))).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||'',favorecido:t.favorecido||''});
 // cria o modelo; sem a atualização 008, grava sem o controle de meses lançados
-async function inserirRecorrencia(o){ try{ return await inserir('recorrencias',o); }catch(e){ if(/gerado_ate/.test(e?.message||'')){ const {geradoAte,...resto}=o; return await inserir('recorrencias',resto); } throw e; } }
+async function inserirRecorrencia(o){ try{ return await inserir('recorrencias',o); }catch(e){ const m=e?.message||'';
+  if(o.tipo==='receita' && /(tipo|origem)/.test(m)) throw {message:'Para receitas fixas, execute a atualização 009_receitas_fixas.sql no Supabase (SQL Editor).'};
+  if(/gerado_ate/.test(m)){ const {geradoAte,...resto}=o; return await inserirRecorrencia(resto); } throw e; } }
+const dataNoMes = (ym,dia) => ym+'-'+String(Math.min(+dia||10,diasNoMes(ym))).padStart(2,'0');
+const linhaReceitaFixa = (t, ym) => ({descricao:t.descricao,origem:t.origem||'Salário',valorPrevisto:r2(t.valor),dataPrevista:dataNoMes(ym,t.dia),situacao:'prevista',periodo:t.periodo||'',recorrenciaId:t.id});
 let gerandoRec=false;
 async function garantirRecorrentes(){
   if(gerandoRec || !S.recor.length || S.fase!=='pronto') return;
   if(S.recor.some(t=>!('geradoAte' in t))){ S.falta008=true; schedule(); return; }
   S.falta008=false;
   const atual=hoje().slice(0,7), base=addMes(atual,HORIZONTE_REC), alvo=S.mes>base?S.mes:base, esp=S.esp;
-  gerandoRec=true; let criadas=0, mexeu=false;
+  gerandoRec=true; const criadas={despesas:0,receitas:0}; let mexeu=false;
   try{
     for(const t of S.recor){
       if(t.ativo===false) continue;
       const desde = t.geradoAte ? addMes(t.geradoAte,1) : (t.inicio||atual);
       if(desde>alvo) continue;
-      const rows=[]; for(let m=desde; m<=alvo; m=addMes(m,1)) if(!S.desp.some(d=>d.recorrenciaId===t.id && compDesp(d)===m)) rows.push(linhaRecorrente(t,m));
+      const R=ehRecR(t), tab=R?'receitas':'despesas', ja=lancsRec(t), rows=[];
+      for(let m=desde; m<=alvo; m=addMes(m,1)) if(!ja.some(x=>compL(t,x)===m)) rows.push(R?linhaReceitaFixa(t,m):linhaRecorrente(t,m));
       // trava otimista: só um aparelho lança cada intervalo
       let q=sb.from('recorrencias').update({gerado_ate:alvo}).eq('id',t.id).eq('espaco_id',esp);
       q = t.geradoAte ? q.eq('gerado_ate',t.geradoAte) : q.is('gerado_ate',null);
       const ok=chk(await q.select('id')); mexeu=true;
       if(!ok.length || S.esp!==esp) continue;
-      if(rows.length){ chk(await sb.from('despesas').insert(rows.map(r=>({...toDb(r),espaco_id:esp})))); criadas+=rows.length; }
+      if(rows.length){ chk(await sb.from(tab).insert(rows.map(r=>({...toDb(r),espaco_id:esp})))); criadas[tab]+=rows.length; }
     }
-    if(criadas) await recarregar('despesas');
+    if(criadas.despesas) await recarregar('despesas');
+    if(criadas.receitas) await recarregar('receitas');
     if(mexeu) await recarregar('recorrencias');
   }catch(e){ console.error(e); if(/gerado_ate/.test(e?.message||'')){ S.falta008=true; schedule(); } }
   finally{ gerandoRec=false; }
 }
-/* alterações no modelo valem para os lançamentos ainda não pagos deste mês em diante */
-async function aplicarModeloFuturo(t, novo){
-  const atual=hoje().slice(0,7);
-  const alvos=S.desp.filter(d=>d.recorrenciaId===t.id && d.situacao!=='paga' && ativa(d) && compDesp(d)>=atual);
+/* alterações no modelo valem para os lançamentos ainda não pagos/recebidos deste mês em diante */
+async function aplicarModeloFuturo(t, novo, desde){
+  const atual=desde||hoje().slice(0,7), R=ehRecR(t), tab=R?'receitas':'despesas';
+  const alvos=lancsRec(t).filter(x=>!quitadoL(t,x) && ativa(x) && compL(t,x)>=atual);
   if(novo.ativo===false){
-    const sair=alvos.filter(d=>compDesp(d)>atual).map(d=>d.id);
-    if(sair.length) chk(await sb.from('despesas').delete().in('id',sair).eq('espaco_id',S.esp));
+    const sair=alvos.filter(x=>compL(t,x)>atual).map(x=>x.id);
+    if(sair.length) chk(await sb.from(tab).delete().in('id',sair).eq('espaco_id',S.esp));
     chk(await sb.from('recorrencias').update({gerado_ate:atual}).eq('id',t.id).eq('espaco_id',S.esp));
   }
-  for(const d of alvos){ if(novo.ativo===false && compDesp(d)>atual) continue;
-    const ym=compDesp(d), l=linhaRecorrente({...t,...novo,id:t.id},ym);
-    chk(await sb.from('despesas').update(toDb({descricao:l.descricao,valor:l.valor,categoria:l.categoria,formaPagamento:l.formaPagamento,periodo:l.periodo,vencimento:l.vencimento,chavePix:l.chavePix,pixCopiaCola:l.pixCopiaCola})).eq('id',d.id).eq('espaco_id',S.esp)); }
-  await recarregar('despesas');
+  for(const x of alvos){ if(novo.ativo===false && compL(t,x)>atual) continue;
+    const ym=compL(t,x), m={...t,...novo,id:t.id};
+    const patch = R ? (({descricao,origem,valorPrevisto,dataPrevista,periodo})=>({descricao,origem,valorPrevisto,dataPrevista,periodo}))(linhaReceitaFixa(m,ym))
+      : (l=>({descricao:l.descricao,valor:l.valor,categoria:l.categoria,formaPagamento:l.formaPagamento,periodo:l.periodo,vencimento:l.vencimento,chavePix:l.chavePix,pixCopiaCola:l.pixCopiaCola}))(linhaRecorrente(m,ym));
+    chk(await sb.from(tab).update(toDb(patch)).eq('id',x.id).eq('espaco_id',S.esp)); }
+  await recarregar(tab);
 }
 
 /* ---------- ações ---------- */
@@ -1147,7 +1172,12 @@ const acoes = {
           {t:'Só esta parcela',cls:'',fn:async()=>{ await remover('despesas',id); apagarArquivos([d.comprovante]); toast('Parcela excluída.'); }},
           {t:`Esta e as próximas (${prox.length})`,fn:async()=>{ await remover('despesas',prox.map(x=>x.id)); apagarArquivos(prox.map(x=>x.comprovante)); toast(`${prox.length} parcelas excluídas.`); }}]);
       } else confirmar('Excluir despesa',`Excluir “${esc(d.descricao)}” (${money(d.valor)})? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('despesas',id); apagarArquivos([d.comprovante]); toast('Despesa excluída.'); }}]);
-    } else { const r=S.rec.find(x=>x.id===id); if(!r) return; confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); apagarArquivos([r.comprovante]); toast('Receita excluída.'); }}]); } },
+    } else { const r=S.rec.find(x=>x.id===id); if(!r) return; const t=r.recorrenciaId?S.recor.find(x=>x.id===r.recorrenciaId):null;
+      if(t){ const prox=S.rec.filter(x=>x.recorrenciaId===t.id && x.situacao!=='recebida' && compRec(x)>=compRec(r) && x.id!==r.id);
+        confirmar('Excluir receita fixa',`${esc(r.descricao)} se repete todo mês. O que deseja excluir?`,[
+          {t:'Só este mês',cls:'',fn:async()=>{ await remover('receitas',id); apagarArquivos([r.comprovante]); toast('Receita do mês excluída.'); }},
+          {t:`Este e os próximos (${prox.length+1})`,fn:async()=>{ await remover('receitas',[id,...prox.map(x=>x.id)]); apagarArquivos([r.comprovante]); await atualizar('recorrencias',t.id,{ativo:false,geradoAte:addMes(compRec(r),-1)}); toast('Receita fixa encerrada.'); }}]); return; }
+      confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); apagarArquivos([r.comprovante]); toast('Receita excluída.'); }}]); } },
   conf: async el => { const fn=confirmar.cb?.[+el.dataset.i]; if(!fn) return; el.disabled=true; try{ await fn(); fecharModal(); }catch(e){ dbErr(e); el.disabled=false; } },
   gerarRecorrentes: async el => { el.disabled=true; const ym=S.mes, faltam=recorrentesFaltando(ym); const [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
     try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||''})));
@@ -1159,6 +1189,17 @@ const acoes = {
     if(n){ confirmar('Categoria em uso',`“${esc(c.nome)}” tem ${n} lançamentos. Para excluí-la, mova esses lançamentos para outra categoria editando cada um, ou mantenha a categoria.`,[]); return; }
     confirmar('Excluir categoria',`Excluir a categoria “${esc(c.nome)}”?`,[{t:'Excluir',fn:async()=>{ await remover('categorias',c.id); toast('Categoria excluída.'); }}]); },
   editRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return;
+    if(ehRecR(t)) return abrirModal(`<form data-form="quick">${head('Receita fixa')}<div class="form-grid">
+      <div class="field full"><label for="tD">Descrição</label><input id="tD" name="descricao" required value="${esc(t.descricao)}"></div>
+      <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
+      <div class="field"><label for="tDia">Dia do recebimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
+      <div class="field"><label for="tO">Origem</label><select id="tO" name="origem">${opts(ORIGENS.map(x=>[x,x]),t.origem||'Salário')}</select></div>
+      <div class="field"><label for="tP">Período</label><select id="tP" name="periodo">${opts([['','Sem período'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
+      <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (lança todo mês)</label></div>
+      <p class="note">A alteração vale para os meses ainda não recebidos, do atual em diante. Ao pausar, os meses futuros não recebidos saem do Financeiro.</p>${rodape('Salvar')}</form>`,
+    async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
+      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,origem:f.elements.origem.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked};
+      await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Receita fixa atualizada.'); });
     abrirModal(`<form data-form="quick">${head('Conta fixa recorrente')}<div class="form-grid">
       <div class="field full"><label for="tD">Descrição</label><input id="tD" name="descricao" required value="${esc(t.descricao)}"></div>
       <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
@@ -1173,11 +1214,11 @@ const acoes = {
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
       const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()};
       await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Conta recorrente atualizada.'); }); },
-  delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; const atual=hoje().slice(0,7);
-    const fut=S.desp.filter(d=>d.recorrenciaId===t.id && d.situacao!=='paga' && ativa(d) && compDesp(d)>atual);
-    confirmar('Excluir conta fixa',`Excluir “${esc(t.descricao)}”?${fut.length?` Há ${fut.length} ${fut.length>1?'meses futuros lançados e não pagos':'mês futuro lançado e não pago'}.`:''} Meses já pagos continuam no Financeiro.`,
+  delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; const atual=hoje().slice(0,7), R=ehRecR(t), tab=R?'receitas':'despesas';
+    const fut=lancsRec(t).filter(x=>!quitadoL(t,x) && ativa(x) && compL(t,x)>atual);
+    confirmar(R?'Excluir receita fixa':'Excluir conta fixa',`Excluir “${esc(t.descricao)}”?${fut.length?` Há ${fut.length} ${fut.length>1?'meses futuros lançados':'mês futuro lançado'} e ainda não ${R?'recebido':'pago'}${fut.length>1?'s':''}.`:''} Meses já ${R?'recebidos':'pagos'} continuam no Financeiro.`,
       fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam no Financeiro.'); }},
-        {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover('despesas',fut.map(d=>d.id)); await remover('recorrencias',t.id); toast('Conta fixa encerrada.'); }}]
+        {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover(tab,fut.map(x=>x.id)); await remover('recorrencias',t.id); toast(R?'Receita fixa encerrada.':'Conta fixa encerrada.'); }}]
       :[{t:'Excluir',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
   exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[]};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
@@ -1830,7 +1871,7 @@ function abrirRapido(){
     <p class="err" id="formErr"></p>
     <footer><button type="button" class="btn ghost" data-act="novo" data-tipo="despesa">Lançamento manual completo</button><button type="button" class="btn" data-act="fechar">Fechar</button></footer>`,null);
 }
-function baseReconhecer(){ return {desp:S.desp, rec:S.rec, recor:S.recor, cats:S.cats}; }
+function baseReconhecer(){ return {desp:S.desp, rec:S.rec, recor:recorD(), cats:S.cats}; }
 function telaFila(msg){ $('#modal').hidden=false; modalSubmit=null; $('#sheet').innerHTML=`<div>${head('Lendo comprovantes')}</div><div class="fila-prog"><div class="spinner" aria-hidden="true"></div><p id="filaMsg">${msg}</p></div>`; }
 async function processarRapido(files, textoR){
   const fila={itens:[], feitos:[]}; S.fila=fila;

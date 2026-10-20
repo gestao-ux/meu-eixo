@@ -210,11 +210,27 @@ let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimatio
 const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
 const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11', clip:'M20 11.5 12.2 19.3a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7.1', foto:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' };
 const logo = `<img src="icone.svg" width="56" height="56" alt="">`;
+/* personalização: nome no perfil; frase e cor guardadas na conta */
+const CORES_AV = {salvia:['Sálvia','#4F8468'],azul:['Azul','#22446A'],terracota:['Terracota','#B4654A'],dourado:['Dourado','#A9853A'],ameixa:['Ameixa','#7A4F6D'],grafite:['Grafite','#3F4A55']};
+const FRASE_PADRAO = 'Organize hoje. Viva com mais leveza.';
+const meuNome = () => (S.perfil?.nome||'').trim();
+const primeiroNome = () => meuNome().split(/\s+/)[0] || '';
+const iniciais = n => { const p=(n||'').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0]||'')+(p.length>1?p[p.length-1][0]:'')).toUpperCase(); };
+const minhaFrase = () => (S.user?.user_metadata?.frase||'').trim() || FRASE_PADRAO;
+const minhaCor = () => CORES_AV[S.user?.user_metadata?.cor]?.[1] || CORES_AV.salvia[1];
+function saudacao(){ const h=+new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Cuiaba',hour:'numeric',hourCycle:'h23'}).format(new Date()); return h<5?'Boa noite':h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'; }
+const dataExtenso = () => { const t=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Cuiaba',weekday:'long',day:'numeric',month:'long'}).format(new Date()); return t.charAt(0).toUpperCase()+t.slice(1); };
 
 function renderNav(){
   $('#nav').innerHTML = `<div class="nav-label">Navegação</div>` + NAV.map(n=>`<button data-act="ir" data-v="${n.id}" ${S.view===n.id?'aria-current="page"':''}>${icon(n.ic)}<span>${n.t}</span>${n.soon?`<span class="soon">Etapa ${n.soon}</span>`:''}</button>`).join('');
   $('#espacoSel').innerHTML = S.espacos.map(e=>`<option value="${e.id}" ${e.id===S.esp?'selected':''}>${esc(e.nome)}${e.tipo==='compartilhado'?' · compartilhado':''}</option>`).join('');
   $('#quem').textContent = S.perfil?.nome || S.user?.email || '';
+  const nome=meuNome(), ini=iniciais(nome);
+  $('#brandNome').textContent = nome || 'Meu Eixo';
+  $('#brandFrase').textContent = minhaFrase();
+  $('#avatar').innerHTML = ini ? esc(ini) : '<img src="icone.svg" width="22" height="22" alt="">';
+  $('#brand').style.setProperty('--av', minhaCor());
+  $('#spacePick').hidden = S.espacos.length<=1;
 }
 function render(){
   const v=$('#view');
@@ -308,6 +324,7 @@ function vInicio(){
   const prox=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
   const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
   return `
+  <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
   <section class="rapido-bar"><form data-form="rapidoTexto" class="rapido-texto"><div class="field"><label for="rtHome">Lançamento rápido</label><input id="rtHome" name="t" autocomplete="off" placeholder="uber 23,50 · ifood 45,90 ontem · recebi 150 João"></div><button class="btn primary" type="submit">Lançar</button><button class="btn" type="button" data-act="enviarComprovante">${icon(I.clip)}Comprovante</button></form><p class="err" id="rtErr"></p></section>
   ${blocoConferir()}
   ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
@@ -427,7 +444,7 @@ function vConfig(){
   return `
   <section class="panel"><h3>Minha conta</h3>
     <p class="small muted" style="margin:0 0 14px">${esc(S.perfil?.nome||'')} · ${esc(S.user?.email||'')}</p>
-    <div class="actions"><button class="btn" data-act="editarNome">Alterar nome</button><button class="btn" data-act="trocarSenha">Alterar senha</button><button class="btn" data-act="sair">Sair deste aparelho</button></div></section>
+    <div class="actions"><button class="btn" data-act="personalizar">Personalizar nome e frase</button><button class="btn" data-act="trocarSenha">Alterar senha</button><button class="btn" data-act="sair">Sair deste aparelho</button></div></section>
   <section class="panel"><div class="section-head"><h3 style="margin:0">Espaços</h3><div class="right"><button class="btn sm" data-act="entrarEspaco">Entrar com código</button><button class="btn sm primary" data-act="criarEspaco">${icon(I.plus)}Criar espaço compartilhado</button></div></div>
     <p class="small muted" style="margin:0 0 12px">Seu espaço pessoal é só seu. Em um espaço compartilhado, todos os membros veem e lançam os mesmos dados. Você está em: <b>${esc(e?.nome||'')}</b>.</p>
     ${comp?`<div class="panel" style="background:var(--surface);border:0">
@@ -1219,8 +1236,21 @@ const acoes = {
       for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); toast('Dados do espaço excluídos.'); }),
   excluirConta: () => abrirModal(`<form data-form="quick">${head('Excluir minha conta')}<p style="margin:0">Sua conta, seu espaço pessoal e os espaços compartilhados que você criou serão apagados de forma definitiva. Espaços criados por outras pessoas continuam existindo para elas. Exporte seus dados antes.</p><div class="field"><label for="qX">Digite EXCLUIR MINHA CONTA para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir conta','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR MINHA CONTA') return 'Digite EXCLUIR MINHA CONTA em maiúsculas para confirmar.'; chk(await sb.rpc('excluir_minha_conta')); await sb.auth.signOut(); }),
-  editarNome: () => abrirModal(`<form data-form="quick">${head('Alterar nome')}<div class="field"><label for="qN">Nome</label><input id="qN" name="n" required maxlength="60" value="${esc(S.perfil?.nome)}"></div>${rodape('Salvar')}</form>`,
-    async f=>{ const n=f.elements.n.value.trim(); if(!n) return 'Informe o nome.'; chk(await sb.from('perfis').upsert({id:S.user.id,nome:n})); S.perfil={...S.perfil,nome:n}; toast('Nome atualizado.'); render(); }),
+  editarNome: () => acoes.personalizar(),
+  personalizar: () => { fecharMenu(); const corAtual=S.user?.user_metadata?.cor||'salvia';
+    abrirModal(`<form data-form="quick">${head('Personalizar')}
+      <div class="prev-perfil" id="pvPerfil"><span class="avatar" style="width:48px;height:48px;border-radius:99px;display:grid;place-items:center;color:#fff;font-family:var(--f-display);font-size:18px;background:${minhaCor()}" id="pvAv">${esc(iniciais(meuNome())||'·')}</span><div><b id="pvNome" style="font-family:var(--f-display);font-size:18px;font-weight:500">${esc(meuNome()||'Seu nome')}</b><div class="small muted" id="pvFrase">${esc(minhaFrase())}</div></div></div>
+      <div class="form-grid">
+        <div class="field full"><label for="pzN">Seu nome</label><input id="pzN" name="n" required maxlength="60" autocomplete="name" value="${esc(meuNome())}" placeholder="Como quer ser chamada"></div>
+        <div class="field full"><label for="pzF">Sua frase</label><input id="pzF" name="f" maxlength="80" value="${esc(S.user?.user_metadata?.frase||'')}" placeholder="${esc(FRASE_PADRAO)}"></div>
+        <div class="field full"><label>Cor</label><div class="cores" id="pzCores">${Object.entries(CORES_AV).map(([k,[t,h]])=>`<button type="button" style="--c:${h}" aria-label="${t}" title="${t}" aria-pressed="${k===corAtual}" data-act="pzCor" data-v="${k}"></button>`).join('')}</div><input type="hidden" name="cor" value="${corAtual}"></div>
+      </div><p class="note">Aparecem no menu e na saudação do Início. A frase é opcional.</p>${rodape('Salvar')}</form>`,
+    async f=>{ const n=f.elements.n.value.trim(), fr=f.elements.f.value.trim(), cor=f.elements.cor.value; if(!n) return 'Informe o seu nome.';
+      chk(await sb.from('perfis').upsert({id:S.user.id,nome:n})); S.perfil={...S.perfil,nome:n};
+      const r=chk(await sb.auth.updateUser({data:{nome:n,frase:fr,cor}})); if(r?.user) S.user=r.user;
+      render(); toast('Perfil personalizado.'); },
+    root=>{ const f=root.querySelector('form'); const pv=()=>{ const n=f.elements.n.value.trim(); root.querySelector('#pvNome').textContent=n||'Seu nome'; root.querySelector('#pvAv').textContent=iniciais(n)||'·'; root.querySelector('#pvFrase').textContent=f.elements.f.value.trim()||FRASE_PADRAO; }; f.addEventListener('input',pv); }); },
+  pzCor: el => { const f=el.closest('form'); f.elements.cor.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); f.querySelector('#pvAv').style.background=CORES_AV[el.dataset.v][1]; },
   trocarSenha: () => abrirModal(`<form data-form="quick">${head('Alterar senha')}<div class="form-grid"><div class="field"><label for="qS1">Nova senha</label><input id="qS1" name="s1" type="password" autocomplete="new-password" minlength="8" required></div><div class="field"><label for="qS2">Repita a nova senha</label><input id="qS2" name="s2" type="password" autocomplete="new-password" minlength="8" required></div></div>${rodape('Alterar senha')}</form>`,
     async f=>{ if(f.elements.s1.value.length<8) return 'Use pelo menos 8 caracteres.'; if(f.elements.s1.value!==f.elements.s2.value) return 'As duas senhas não são iguais.'; chk(await sb.auth.updateUser({password:f.elements.s1.value})); toast('Senha alterada.'); }),
   criarEspaco: () => abrirModal(`<form data-form="quick">${head('Criar espaço compartilhado')}<p class="muted" style="margin:0">Use para finanças da casa ou da família. Ele começa com as categorias padrão e você recebe um código para convidar outras pessoas.</p><div class="field"><label for="qN">Nome do espaço</label><input id="qN" name="n" required maxlength="60" placeholder="Ex.: Casa"></div>${rodape('Criar espaço')}</form>`,

@@ -307,9 +307,6 @@ function vInicio(){
   const prevAte = sd===null?null:r2(sd-sum(ate,d=>d.valor));
   const prox=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
   const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
-  const fd=rs.D.filter(ehAlimentacao), lim=orcamentoMes(ym);
-  const orcAlim=r2(S.cats.filter(c=>c.alimentacao).reduce((a,c)=>a+(+lim[c.id]||0),0));
-  const gAlim=sum(fd,d=>d.valor), marm=sum(fd.filter(d=>catById(d.categoria)?.nome==='Marmitas compradas'),d=>d.valor);
   return `
   <section class="rapido-bar"><form data-form="rapidoTexto" class="rapido-texto"><div class="field"><label for="rtHome">Lançamento rápido</label><input id="rtHome" name="t" autocomplete="off" placeholder="uber 23,50 · ifood 45,90 ontem · recebi 150 João"></div><button class="btn primary" type="submit">Lançar</button><button class="btn" type="button" data-act="enviarComprovante">${icon(I.clip)}Comprovante</button></form><p class="err" id="rtErr"></p></section>
   ${blocoConferir()}
@@ -329,8 +326,8 @@ function vInicio(){
   </div>
   <div class="grid2">
     <section class="panel"><h3>Composição das despesas</h3><div class="list">${linha('Despesas fixas',money(rs.fixas))}${linha('Despesas variáveis',money(rs.variaveis))}${linha('Parcelas neste mês',money(rs.parcelas))}${linha('Parcelas a pagar (todos os meses)',money(sum(parcelasFuturas(),d=>d.valor)))}</div></section>
-    <section class="panel"><h3>Alimentação no mês</h3><div class="list">${linha('Orçamento alimentar',orcAlim?money(orcAlim):'<span class="muted small">não definido</span>')}${linha('Gasto com alimentação',money(gAlim))}${linha('Marmitas prontas',money(marm))}</div>
-</section>
+    <section class="panel"><h3>Maiores despesas do mês</h3>${(()=>{ const top=[...rs.D].sort((a,b)=>(+b.valor)-(+a.valor)).slice(0,5);
+      return top.length?`<div class="list">${top.map((d,i)=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${i+1}. ${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}</span><span>${sitDesp(d)==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma despesa em ${mesLabel(ym)}.</p>`; })()}</section>
   </div>`;
 }
 

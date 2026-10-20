@@ -337,8 +337,6 @@ function vInicio(){
   ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
   <section><div class="section-head"><h2>Visão financeira</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
     <div class="kpis">
-      <div class="kpi hero"><span class="lbl">Saldo disponível</span><span class="val">${sd===null?'—':money(sd)}</span><span class="sub">${sd===null?'<button class="btn sm ghost" data-act="ir" data-v="config" style="padding-left:0">Informe o saldo inicial</button>':'em conta, hoje'}</span></div>
-      <div class="kpi"><span class="lbl">Previsto até ${dataCurta(pr)}</span><span class="val ${prevAte!==null&&prevAte<0?'neg':''}">${prevAte===null?'—':money(prevAte)}</span><span class="sub">após ${ate.length} ${ate.length===1?'conta':'contas'} antes do recebimento</span></div>
       <div class="kpi"><span class="lbl">Receitas do mês</span><span class="val pos">${money(rs.recReal)}</span><span class="sub">de ${money(rs.recPrev)} previstos</span></div>
       <div class="kpi"><span class="lbl">Despesas do mês</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} já pagos</span></div>
       <div class="kpi"><span class="lbl">Contas pendentes</span><span class="val">${money(rs.pendVal)}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'lançamento':'lançamentos'}</span></div>

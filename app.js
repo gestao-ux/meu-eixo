@@ -42,7 +42,7 @@ const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPA
 
 const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
 const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
-const NULOS = new Set(['data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
+const NULOS = new Set(['conta_id','estorno_de','data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
 function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
 function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
 const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
@@ -54,24 +54,25 @@ const S = { rec:[], desp:[], cats:[], recor:[], orc:{}, cfg:{}, espacos:[], esp:
 const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
   {id:'financeiro',t:'Lançamentos',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
-  {id:'planejamento',t:'Planejamento financeiro',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
+  {id:'planejamento',t:'Planejamento',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
   {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01'},
   {id:'config',t:'Configurações',ic:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z'}
 ];
 const ORIGENS = ['Salário','Comissões','Renda extra','Reembolso','Outra'];
 const FORMAS = ['Pix','Débito','Crédito','Boleto','Dinheiro','Transferência','Débito automático','Outra'];
-const SIT_D = {prevista:'Prevista',pendente:'Pendente',paga:'Paga',atrasada:'Atrasada',cancelada:'Cancelada'};
-const SIT_R = {prevista:'Prevista',recebida:'Recebida',atrasada:'Atrasada',cancelada:'Cancelada'};
+const SIT_D = {pendente:'Pendente',prevista:'Programado',paga:'Pago',atrasada:'Vencido',cancelada:'Cancelado'};
+const SIT_R = {prevista:'Programado',recebida:'Recebido',atrasada:'Atrasado',cancelada:'Cancelado'};
 
 /* ---------- regras de negócio ---------- */
 const compDesp = d => (d.vencimento||d.dataCompra||'').slice(0,7);
 const compRec = r => (r.dataPrevista||r.dataEfetiva||'').slice(0,7);
-function sitDesp(d){ if(d.situacao==='paga'||d.situacao==='cancelada') return d.situacao; if(d.vencimento && d.vencimento<hoje()) return 'atrasada'; return d.situacao||'pendente'; }
+// Pago · Vencido · Programado (meses seguintes ou marcado assim) · Pendente (mês atual)
+function sitDesp(d){ if(d.situacao==='paga'||d.situacao==='cancelada') return d.situacao; const h=hoje(); if(d.vencimento && d.vencimento<h) return 'atrasada'; if(d.situacao==='prevista' || (d.vencimento||'').slice(0,7)>h.slice(0,7)) return 'prevista'; return 'pendente'; }
 function sitRec(r){ if(r.situacao==='recebida'||r.situacao==='cancelada') return r.situacao; if(r.dataPrevista && r.dataPrevista<hoje()) return 'atrasada'; return 'prevista'; }
 const ativa = x => x.situacao!=='cancelada';
 const despMes = ym => S.desp.filter(d=>compDesp(d)===ym);
-const recMes = ym => S.rec.filter(r=>compRec(r)===ym);
+const recMes = ym => S.rec.filter(r=>compRec(r)===ym && r.natureza!=='estorno');
 const recEsperado = r => r.situacao==='recebida' ? (+r.valorRecebido||0) : (+r.valorPrevisto||0);
 const catById = id => S.cats.find(c=>c.id===id);
 const catNome = id => catById(id)?.nome || 'Sem categoria';
@@ -83,13 +84,14 @@ function resumo(ym){
   const D = despMes(ym).filter(ativa), R = recMes(ym).filter(ativa);
   const out = {
     recPrev: sum(R,r=>r.valorPrevisto), recReal: sum(R.filter(r=>r.situacao==='recebida'),r=>r.valorRecebido), recEsp: sum(R,recEsperado),
-    despTot: sum(D,d=>d.valor), despPaga: sum(D.filter(d=>d.situacao==='paga'),d=>d.valor),
-    fixas: sum(D.filter(d=>d.comportamento==='fixa'),d=>d.valor), variaveis: sum(D.filter(d=>d.comportamento!=='fixa'),d=>d.valor),
+    despTot: sum(D,valorLiq), despPaga: sum(D.filter(d=>d.situacao==='paga'),d=>d.valor),
+    fixas: sum(D.filter(d=>d.comportamento==='fixa'),valorLiq), variaveis: sum(D.filter(d=>d.comportamento!=='fixa'),valorLiq),
     parcelas: sum(D.filter(d=>(+d.parcelas||1)>1),d=>d.valor), pend: D.filter(d=>d.situacao!=='paga'), D, R };
   out.pendVal = sum(out.pend,d=>d.valor); out.saldoPrev = r2(out.recEsp - out.despTot); out.saldoReal = r2(out.recReal - out.despPaga);
   return out;
 }
 function saldoDisponivel(){
+  if(temContas() && contasAtivas().length) return saldoEmConta();
   const c=S.cfg; if(c.saldoInicial===undefined||c.saldoInicial===null||!c.dataSaldo) return null;
   let s=+c.saldoInicial;
   for(const r of S.rec) if(r.situacao==='recebida' && r.dataEfetiva && r.dataEfetiva>=c.dataSaldo) s+= +r.valorRecebido||0;
@@ -104,7 +106,7 @@ function periodo(ym,p){
 }
 const parcelasFuturas = () => S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && d.situacao!=='paga');
 const orcamentoMes = ym => S.orc[ym]?.limites || {};
-const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),d=>d.valor);
+const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),valorLiq);
 const ehRecR = t => t?.tipo==='receita';
 const recorD = () => S.recor.filter(t=>!ehRecR(t));
 const lancsRec = t => ehRecR(t) ? S.rec.filter(r=>r.recorrenciaId===t.id) : S.desp.filter(d=>d.recorrenciaId===t.id);
@@ -188,9 +190,10 @@ async function abrirEspaco(id){
   S.canal=sb.channel('espaco-'+id);
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
   for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
-  S.canal.subscribe();
   for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
-  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas();
+  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas(); S.contas=undefined; S.transf=[]; S.contasErro=false; carregarContas();
+  for(const t of ['contas','transferencias']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tct); S._tct=setTimeout(carregarContas,400); });
+  S.canal.subscribe();
   S.fase='pronto'; render(); garantirRecorrentes();
 }
 async function entrar(session){
@@ -204,7 +207,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,contas:undefined,transf:[],contasErro:false,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -212,7 +215,7 @@ const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11', clip:'M20 11.5 12.2 19.3a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7.1', foto:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' };
 const logo = `<img src="icone.svg" width="56" height="56" alt="">`;
 /* personalização: nome no perfil; frase e cor guardadas na conta */
-const CORES_AV = {salvia:['Sálvia','#4F8468'],azul:['Azul','#22446A'],terracota:['Terracota','#B4654A'],dourado:['Dourado','#A9853A'],ameixa:['Ameixa','#7A4F6D'],grafite:['Grafite','#3F4A55']};
+const CORES_AV = {salvia:['Sálvia','#4F8468'],azul:['Azul','#22446A'],terracota:['Terracota','#B4654A'],petroleo:['Petróleo','#1F6F78'],ameixa:['Ameixa','#7A4F6D'],grafite:['Grafite','#3F4A55']};
 const FRASE_PADRAO = 'Organize hoje. Viva com mais leveza.';
 const meuNome = () => (S.perfil?.nome||'').trim();
 const primeiroNome = () => meuNome().split(/\s+/)[0] || '';
@@ -301,15 +304,16 @@ function rowDesp(d,o={}){
   const pix=d.pixCopiaCola||d.chavePix;
   if(d.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="despesas" data-id="${d.id}">${icon(I.check)}Conferido</button>`);
   if(pix && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
-  if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Paga</button>`);
+  if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`);
   if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   if(o.mover){ if(d.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="10">Dia 10</button>`); if(d.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="20">Dia 20</button>`); if(d.periodo) ops.push(`<button class="btn sm ghost" data-act="periodo" data-id="${d.id}" data-p="">Tirar do período</button>`); }
+  if(s==='paga' && !o.mover && temContas() && valorLiq(d)>0) ops.push(`<button class="btn sm ghost" data-act="estornar" data-id="${d.id}" title="Registrar estorno">Estorno</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
   const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
   const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}${contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];
@@ -357,21 +361,23 @@ function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
   if(f.sit) D=D.filter(d=>sitDesp(d)===f.sit); if(f.cat) D=D.filter(d=>d.categoria===f.cat);
   D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
-  const isD=S.tab==='despesas';
+  const isD=S.tab==='despesas', isM=S.tab==='movimentacoes';
   return `${blocoConferir()}
+  ${faixaContas()}
   <div class="kpis">
     <div class="kpi"><span class="lbl">Receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} recebidos</span></div>
     <div class="kpi"><span class="lbl">Despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} pagos</span></div>
     <div class="kpi"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">realizado até agora ${money(rs.saldoReal)}</span></div>
   </div>
   <section>
-    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${!isD}" data-act="tab" data-v="receitas">Receitas (${R.length})</button></div>
+    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${S.tab==='receitas'}" data-act="tab" data-v="receitas">Receitas (${R.length})</button>${temContas()||S.contasErro?`<button role="tab" aria-selected="${isM}" data-act="tab" data-v="movimentacoes">Movimentações</button>`:''}</div>
+    ${isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
     <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
     ${isD?`<div class="filters">
       <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit"><option value="">Todas</option>${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit===k?'selected':''}>${v}</option>`).join('')}</select></div>
       <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat"><option value="">Todas</option>${S.cats.map(c=>`<option value="${c.id}" ${f.cat===c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
     <div class="list">${isD?(D.length?D.map(d=>rowDesp(d)).join(''):`<div class="empty"><strong>Nenhuma despesa ${f.sit||f.cat?'com esses filtros':'em '+mesLabel(ym)}</strong>Use “Nova despesa” para registrar contas, compras parceladas ou despesas fixas.</div>`)
-      :(R.length?R.map(r=>rowRec(r)).join(''):`<div class="empty"><strong>Nenhuma receita em ${mesLabel(ym)}</strong>Cadastre salário, comissões e outras entradas com a data prevista. Depois registre o valor efetivamente recebido.</div>`)}</div>
+      :(R.length?R.map(r=>rowRec(r)).join(''):`<div class="empty"><strong>Nenhuma receita em ${mesLabel(ym)}</strong>Cadastre salário, comissões e outras entradas com a data prevista. Depois registre o valor efetivamente recebido.</div>`)}</div>`}
   </section>`;
 }
 
@@ -428,7 +434,7 @@ function vRelatorios(){
   const dados=meses.map(m=>{const r=resumo(m); return {m,rec:r.recEsp,desp:r.despTot};});
   const max=Math.max(1,...dados.flatMap(d=>[d.rec,d.desp]));
   const ym=S.mes, D=despMes(ym).filter(ativa), ant=despMes(addMes(ym,-1)).filter(ativa), rs=resumo(ym);
-  const porCat=S.cats.map(c=>({c,v:sum(D.filter(d=>d.categoria===c.id),d=>d.valor),a:sum(ant.filter(d=>d.categoria===c.id),d=>d.valor)})).filter(x=>x.v||x.a).sort((a,b)=>b.v-a.v);
+  const porCat=S.cats.map(c=>({c,v:sum(D.filter(d=>d.categoria===c.id),valorLiq),a:sum(ant.filter(d=>d.categoria===c.id),valorLiq)})).filter(x=>x.v||x.a).sort((a,b)=>b.v-a.v);
   const maior=[...D].sort((a,b)=>b.valor-a.valor)[0], temDados=dados.some(d=>d.rec||d.desp);
   return `
   <section class="panel"><h3>Receitas e despesas · últimos 6 meses</h3>
@@ -459,12 +465,14 @@ function vConfig(){
       <h3 style="margin:16px 0 6px;font-size:15px">Membros</h3>${membros}
       <div class="actions" style="margin-top:12px">${dono?`<button class="btn sm ghost" data-act="renomearEspaco">Renomear espaço</button><button class="btn sm danger" data-act="excluirEspaco">Excluir espaço</button>`:`<button class="btn sm danger" data-act="sairEspaco">Sair deste espaço</button>`}</div></div>`:''}
   </section>
-  <section class="panel"><h3>Saldo inicial</h3>
+  ${temContas()?`<section class="panel"><div class="section-head"><h3 style="margin:0">Contas</h3><div class="right"><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Nova conta</button></div></div>
+    <p class="small muted" style="margin:0 0 10px">Onde o seu dinheiro fica. O saldo de cada conta parte do valor informado e soma recebimentos, pagamentos, transferências e ajustes.</p>
+    ${(S.contas||[]).length?`<div class="list">${[...S.contas].sort((a,b)=>(b.ativa!==false)-(a.ativa!==false)||(b.padrao-a.padrao)||a.nome.localeCompare(b.nome,'pt')).map(c=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(c.nome)}</div><div class="meta"><span>${esc(TIPOS_CONTA[c.tipo]||'')}</span>${c.padrao?'<span class="pill paga">Principal</span>':''}${c.ativa===false?'<span class="pill cancelada">Arquivada</span>':''}<span>saldo informado ${money(c.saldoInicial)} em ${dataCurta(c.dataSaldo)}</span></div></div><div class="v ${saldoConta(c)<0?'neg':''}">${money(saldoConta(c))}<div class="small muted">hoje</div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editConta" data-id="${c.id}" aria-label="Editar">${icon(I.edit)}</button></div></div>`).join('')}</div>`:`<div class="empty"><strong>Nenhuma conta cadastrada</strong>Cadastre banco, poupança e carteira com o saldo de hoje.</div>`}</section>`:`  <section class="panel"><h3>Saldo inicial</h3>
     <p class="small muted" style="margin:0 0 14px">Informe quanto havia em conta no início de uma data. A partir dela, o saldo disponível soma os recebimentos e subtrai os pagamentos registrados.</p>
     <form class="form-grid" data-form="saldo" style="max-width:520px">
       <div class="field"><label for="sVal">Saldo em conta (R$)</label><input id="sVal" name="valor" inputmode="decimal" required value="${fmtInput(c.saldoInicial)}" placeholder="0,00"></div>
       <div class="field"><label for="sData">No início do dia</label><input id="sData" name="data" type="date" required value="${c.dataSaldo||hoje()}"></div>
-      <div class="full actions"><button class="btn primary" type="submit">Salvar saldo</button></div></form></section>
+      <div class="full actions"><button class="btn primary" type="submit">Salvar saldo</button></div></form></section>`}
   <section class="panel"><div class="section-head"><h3 style="margin:0">Categorias de despesa</h3><div class="right"><button class="btn sm primary" data-act="novaCat">${icon(I.plus)}Nova categoria</button></div></div>
     ${S.cats.length?`<div class="list">${S.cats.map(k=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(k.nome)}</div><div class="meta">${k.alimentacao?'<span class="pill paga">Conta como alimentação</span>':''}<span>${S.desp.filter(d=>d.categoria===k.id).length} lançamentos</span></div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editCat" data-id="${k.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delCat" data-id="${k.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<div class="empty"><strong>Nenhuma categoria</strong>Crie categorias como Moradia, Transporte e Supermercado.</div>`}</section>
   <section class="panel"><h3>Receitas e contas fixas</h3>
@@ -574,7 +582,7 @@ function formDespesa(d){
   const novo=!d; d=d||{situacao:'pendente',comportamento:'variavel',periodo:'',formaPagamento:'Pix',vencimento:S.mes===hoje().slice(0,7)?hoje():S.mes+'-10'};
   const grupo=(+d.parcelas||1)>1;
   return `<form data-form="despesa" data-id="${d.id||''}">${head(novo?'Nova despesa':'Editar despesa')}
-  ${novo?`<div class="seg"><button type="button" aria-pressed="true">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button></div>`:''}
+  ${novo?`<div class="seg"><button type="button" aria-pressed="true">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button>${temContas()?`<button type="button" aria-pressed="false" data-act="novo" data-tipo="transferencia">Transferência</button>`:''}</div>`:''}
   ${blocoAnexo(d)}
   <div class="grupo"><span class="grupo-t">O que é</span>
     <div class="form-grid">
@@ -603,12 +611,13 @@ function formDespesa(d){
     <div class="form-grid">
       <div class="field"><label for="dValor" id="dValorLbl">${grupo?'Valor desta parcela (R$)':'Valor (R$)'}</label><input id="dValor" name="valor" inputmode="decimal" required value="${fmtInput(d.valor)}" placeholder="0,00"></div>
       <div class="field"><label for="dVenc" id="dVencLbl">${grupo?'Vencimento desta parcela':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
-      <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['pendente','A pagar'],['paga','Paga'],['prevista','Prevista'],['cancelada','Cancelada']],d.situacao)}</select></div>
+      <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['pendente','Pendente'],['paga','Pago'],['prevista','Programado'],['cancelada','Cancelado']],d.situacao)}</select></div>
       <div class="field" data-show="paga"><label for="dPag">Pago em</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
       <div class="field"><label for="dPer">Pagar com o recebimento</label><select id="dPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
       <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['variavel','Variável'],['fixa','Fixa']],d.comportamento)}</select></div>
       <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
       <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
+      ${campoConta(d.contaId,'Sai da conta')}
     </div></div>
   ${blocoPix(d)}
   <div class="field"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
@@ -636,7 +645,7 @@ function wireDespesa(root){
 }
 function camposDespesa(fd){
   return {descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim(),
-    chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():''};
+    chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():'', ...(fd.contaId!==undefined?{contaId:fd.contaId}:{})};
 }
 async function salvarDespesa(f){
   const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, valor=parseValor(fd.valor);
@@ -706,7 +715,7 @@ async function editarDespesa(f,fd,base,valor){
 function formReceita(r){
   const novo=!r; r=r||{situacao:'prevista',origem:'Salário',dataPrevista:S.mes+'-10',periodo:''};
   return `<form data-form="receita" data-id="${r.id||''}">${head(novo?'Nova receita':'Editar receita')}
-  ${novo?`<div class="seg"><button type="button" aria-pressed="false" data-act="novo" data-tipo="despesa">Despesa</button><button type="button" aria-pressed="true">Receita</button></div>`:''}
+  ${novo?`<div class="seg"><button type="button" aria-pressed="false" data-act="novo" data-tipo="despesa">Despesa</button><button type="button" aria-pressed="true">Receita</button>${temContas()?`<button type="button" aria-pressed="false" data-act="novo" data-tipo="transferencia">Transferência</button>`:''}</div>`:''}
   ${blocoAnexo(r,'Envie o comprovante do Pix ou da transferência recebida. Eu leio o valor, a data e quem pagou.')}
   <div class="grupo"><span class="grupo-t">O que é</span>
     <div class="form-grid">
@@ -727,6 +736,7 @@ function formReceita(r){
       <div class="field"><label for="rSit">Situação</label><select id="rSit" name="situacao">${opts([['prevista','A receber'],['recebida','Recebida'],['cancelada','Cancelada']],r.situacao)}</select></div>
       <div class="field" data-show="rec"><label for="rReal">Valor recebido (R$)</label><input id="rReal" name="valorRecebido" inputmode="decimal" value="${fmtInput(r.valorRecebido)}" placeholder="0,00"></div>
       <div class="field" data-show="rec"><label for="rEf">Recebido em</label><input id="rEf" name="dataEfetiva" type="date" value="${r.dataEfetiva||hoje()}"></div>
+      ${campoConta(r.contaId,'Entra na conta')}
     </div></div>
   <div class="field"><label for="rObs">Observações</label><textarea id="rObs" name="obs" rows="2" maxlength="500">${esc(r.obs)}</textarea></div>
   ${rodape(novo?'Salvar receita':'Salvar alterações')}</form>`;
@@ -740,7 +750,7 @@ async function salvarReceita(f){
   let vr=null; if(fd.situacao==='recebida'){ vr=parseValor(fd.valorRecebido); if(isNaN(vr)) vr=vp; if(vr<0) return 'O valor recebido não pode ser negativo.'; }
   const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
   const arq=await enviarArquivo();
-  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
+  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
   const fixa=fd.modoValor==='fixa', ym=fd.dataPrevista.slice(0,7);
   const modelo=()=>({tipo:'receita',descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),periodo,inicio:ym,geradoAte:ym,ativo:true});
   if(id){ const old=S.rec.find(x=>x.id===id), t=old?.recorrenciaId?S.recor.find(x=>x.id===old.recorrenciaId):null;
@@ -1139,6 +1149,161 @@ async function aplicarModeloFuturo(t, novo, desde){
   await recarregar(tab);
 }
 
+/* ---------- contas, transferências, ajustes e estornos (Etapa 1 da evolução) ---------- */
+const TIPOS_CONTA = {corrente:'Conta corrente',poupanca:'Poupança',carteira:'Carteira (dinheiro)',investimento:'Investimento',outra:'Outra'};
+const temContas = () => !S.contasErro && Array.isArray(S.contas);
+const contasAtivas = () => (S.contas||[]).filter(c=>c.ativa!==false).sort((a,b)=>(b.padrao-a.padrao)||(a.ordem-b.ordem)||a.nome.localeCompare(b.nome,'pt'));
+const contaPadrao = () => contasAtivas().find(c=>c.padrao) || contasAtivas()[0] || null;
+const contaById = id => (S.contas||[]).find(c=>c.id===id);
+const contaNome = id => contaById(id)?.nome || '';
+const contaDe = x => x.contaId || contaPadrao()?.id || null;
+
+async function carregarContas(){
+  const id=S.esp;
+  try{
+    const c=chk(await sb.from('contas').select('*').eq('espaco_id',id).order('ordem'));
+    const t=chk(await sb.from('transferencias').select('*').eq('espaco_id',id).order('data',{ascending:false}).limit(2000));
+    if(S.esp!==id) return; S.contas=c.map(fromDb); S.transf=t.map(fromDb); S.contasErro=false;
+  }catch(e){ console.error(e); if(S.esp===id){ S.contas=[]; S.transf=[]; S.contasErro=true; } }
+  schedule();
+}
+async function gravar(t, id, patch){
+  if(id) chk(await sb.from(t).update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp));
+  else chk(await sb.from(t).insert({...toDb(patch),espaco_id:S.esp}));
+  await carregarContas();
+}
+
+/* saldo de uma conta até uma data (inclusive) */
+function saldoConta(c, ate=hoje()){
+  const base=c.dataSaldo; let s=+c.saldoInicial||0;
+  if(!base || ate<base) return r2(s);
+  const ehPadrao = contaPadrao()?.id===c.id, minha = x => x.contaId ? x.contaId===c.id : ehPadrao;
+  for(const r of S.rec) if(r.situacao==='recebida' && r.dataEfetiva && r.dataEfetiva>=base && r.dataEfetiva<=ate && minha(r)) s+= +r.valorRecebido||0;
+  for(const d of S.desp){ const dp=d.dataPagamento||d.vencimento; if(d.situacao==='paga' && dp && dp>=base && dp<=ate && minha(d)) s-= +d.valor||0; }
+  for(const t of S.transf||[]){ if(!t.data || t.data<base || t.data>ate) continue;
+    if(t.contaDestino===c.id) s+= +t.valor||0;
+    if(t.tipo==='transferencia' && t.contaOrigem===c.id) s-= +t.valor||0; }
+  return r2(s);
+}
+const saldoEmConta = (ate=hoje()) => r2(contasAtivas().reduce((a,c)=>a+saldoConta(c,ate),0));
+
+/* estornos: dinheiro de volta de uma despesa */
+const ehEstorno = r => r.natureza==='estorno';
+const estornosDe = id => S.rec.filter(r=>ehEstorno(r) && r.estornoDe===id && r.situacao!=='cancelada');
+const valorEstornado = id => sum(estornosDe(id),r=>r.valorRecebido??r.valorPrevisto);
+const valorLiq = d => r2(Math.max(0,(+d.valor||0)-valorEstornado(d.id)));
+
+/* faixa com o saldo de cada conta */
+function faixaContas(){
+  if(S.contasErro) return `<div class="alert warn"><span class="dot"></span><div><p>Para usar contas, transferências e estornos, execute a atualização <b>011_contas_movimentacoes.sql</b> no Supabase (SQL Editor).</p></div></div>`;
+  if(!temContas()) return '';
+  const cs=contasAtivas();
+  if(!cs.length) return `<section class="contas-faixa vazia"><div><b>Cadastre suas contas</b><span class="small muted">Banco, poupança, carteira: com o saldo de cada uma, o Meu Eixo mostra quanto você tem hoje.</span></div><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Nova conta</button></section>`;
+  return `<section class="contas-faixa"><div class="cf-total"><span class="lbl">Saldo em conta</span><b class="num">${money(saldoEmConta())}</b><span class="small muted">hoje, somando ${cs.length} ${cs.length>1?'contas':'conta'}</span></div>
+    <div class="cf-lista">${cs.map(c=>{ const s=saldoConta(c); return `<button type="button" class="cf-item" data-act="editConta" data-id="${c.id}"><span class="small muted">${esc(c.nome)}${c.padrao&&!/principal/i.test(c.nome)&&contasAtivas().length>1?' · principal':''}</span><b class="num ${s<0?'neg':''}">${money(s)}</b></button>`; }).join('')}
+    <button type="button" class="cf-item cf-add" data-act="novaConta" aria-label="Nova conta">${icon(I.plus)}<span class="small">Conta</span></button></div></section>`;
+}
+
+/* aba Movimentações: transferências, ajustes e estornos do mês */
+function vMovimentacoes(ym){
+  if(S.contasErro) return `<div class="empty"><strong>Atualização pendente</strong>Execute a atualização 011_contas_movimentacoes.sql no Supabase para registrar transferências, ajustes e estornos.</div>`;
+  const T=(S.transf||[]).filter(t=>(t.data||'').slice(0,7)===ym).sort((a,b)=>b.data.localeCompare(a.data));
+  const E=S.rec.filter(r=>ehEstorno(r) && compRec(r)===ym).sort((a,b)=>String(b.dataEfetiva||b.dataPrevista).localeCompare(String(a.dataEfetiva||a.dataPrevista)));
+  if(!T.length && !E.length) return `<div class="empty"><strong>Nenhuma movimentação em ${mesLabel(ym)}</strong>Transferências entre contas, ajustes de saldo e estornos aparecem aqui. Eles não contam como receita nem como despesa.</div>`;
+  const rowT = t => { const aj=t.tipo==='ajuste';
+    return `<div class="row"><div><div class="t">${aj?'Ajuste de saldo':'Transferência'}${t.descricao&&t.descricao!=='Ajuste de saldo'?' · '+esc(t.descricao):''}</div><div class="meta"><span>${dataCurta(t.data)}</span><span>${aj?esc(contaNome(t.contaDestino)):`${esc(contaNome(t.contaOrigem))} → ${esc(contaNome(t.contaDestino))}`}</span><span class="pill ${aj?'':'mov'}">${aj?'Ajuste':'Entre contas'}</span></div></div>
+      <div class="v ${aj?(t.valor<0?'neg':'pos'):''}">${aj&&t.valor>0?'+':''}${money(t.valor)}</div><div class="ops"><button class="btn sm ghost" data-act="editTransf" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delTransf" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`; };
+  const rowE = r => { const d=S.desp.find(x=>x.id===r.estornoDe);
+    return `<div class="row"><div><div class="t">${esc(r.descricao)}</div><div class="meta"><span>${dataCurta(r.dataEfetiva||r.dataPrevista)}</span>${d?`<span>${esc(catNome(d.categoria))}</span>`:''}${r.contaId||contaPadrao()?`<span>${esc(contaNome(contaDe(r)))}</span>`:''}<span class="pill paga">Estorno</span></div></div>
+      <div class="v pos">+${money(r.valorRecebido??r.valorPrevisto)}</div><div class="ops"><button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`; };
+  return `<div class="list">${T.map(rowT).join('')}${E.map(rowE).join('')}</div>
+    <p class="small muted" style="margin-top:10px">Transferências mudam o saldo de cada conta, mas não o total. Ajustes corrigem o saldo de uma conta. Estornos devolvem dinheiro e reduzem o gasto da despesa original.</p>`;
+}
+
+/* formulários */
+const optsContas = (sel, extra=[]) => opts([...extra, ...contasAtivas().map(c=>[c.id,c.nome+(c.padrao?' (principal)':'')])], sel);
+const campoConta = (sel, rotulo='Conta') => temContas() && contasAtivas().length ? `<div class="field"><label for="fConta">${rotulo}</label><select id="fConta" name="contaId">${optsContas(sel||contaPadrao()?.id)}</select></div>` : '';
+
+function formConta(c){
+  c=c||{}; const novo=!c.id, s=c.id?saldoConta(c):null;
+  return `<form data-form="quick">${head(novo?'Nova conta':'Editar conta')}${novo?'':`<p class="muted" style="margin:0">Saldo calculado hoje: <b>${money(s)}</b></p>`}
+    <div class="form-grid">
+      <div class="field full"><label for="ctN">Nome</label><input id="ctN" name="nome" required maxlength="40" value="${esc(c.nome)}" placeholder="Ex.: Nubank, Itaú, Carteira"></div>
+      <div class="field"><label for="ctT">Tipo</label><select id="ctT" name="tipo">${opts(Object.entries(TIPOS_CONTA),c.tipo||'corrente')}</select></div>
+      <div class="field"><label for="ctS">Saldo (R$)</label><input id="ctS" name="saldo" inputmode="decimal" required value="${fmtInput(c.saldoInicial??'')}" placeholder="0,00"></div>
+      <div class="field"><label for="ctD">No início do dia</label><input id="ctD" name="data" type="date" required value="${c.dataSaldo||hoje()}"></div>
+      <label class="check full"><input type="checkbox" name="padrao" ${c.padrao||(novo&&!contasAtivas().length)?'checked':''}> Conta principal (usada quando o lançamento não informa a conta)</label>
+      ${novo?'':`<label class="check full"><input type="checkbox" name="ativa" ${c.ativa!==false?'checked':''}> Conta em uso (desmarque para arquivar)</label>`}
+    </div><p class="note">Informe o saldo que a conta tinha no início do dia escolhido. A partir dele, o Meu Eixo soma o que foi recebido e subtrai o que foi pago nesta conta. Para corrigir uma diferença depois, use “Ajuste de saldo”.</p>${novo?rodape('Criar conta'):`<p class="err" id="formErr"></p><footer><button type="button" class="btn danger" data-act="delConta" data-id="${c.id}" style="margin-right:auto">Excluir</button><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primary" type="submit">Salvar</button></footer>`}</form>`;
+}
+function formTransf(t){
+  t=t||{}; const novo=!t.id, aj=t.tipo==='ajuste', cs=contasAtivas();
+  const c0=t.contaDestino||contaPadrao()?.id, saldoReal = aj&&t.id ? r2(saldoConta(contaById(c0),t.data)) : '';
+  return `<form data-form="quick" data-id="${t.id||''}">${head(novo?'Nova movimentação':'Editar movimentação')}
+    ${novo?`<div class="seg"><button type="button" aria-pressed="false" data-act="novo" data-tipo="despesa">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button><button type="button" aria-pressed="true">Transferência</button></div>`:''}
+    <div class="field full" style="margin-top:12px"><label>O que é</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!aj}" data-act="modoValor" data-v="transferencia" ${cs.length<2?'disabled title="Cadastre ao menos duas contas"':''}>Transferência entre contas</button><button type="button" aria-pressed="${aj}" data-act="modoValor" data-v="ajuste">Ajuste de saldo</button></div><input type="hidden" name="modoValor" value="${aj||cs.length<2?'ajuste':'transferencia'}"></div>
+    <div class="form-grid" data-show="transferencia">
+      <div class="field"><label for="trO">De</label><select id="trO" name="origem">${optsContas(t.contaOrigem||cs[0]?.id)}</select></div>
+      <div class="field"><label for="trD">Para</label><select id="trD" name="destino">${optsContas(t.contaDestino||cs[1]?.id)}</select></div>
+      <div class="field"><label for="trV">Valor (R$)</label><input id="trV" name="valor" inputmode="decimal" value="${!aj&&t.valor?fmtInput(t.valor):''}" placeholder="0,00"></div>
+    </div>
+    <div class="form-grid" data-show="ajuste">
+      <div class="field"><label for="ajC">Conta</label><select id="ajC" name="contaAj">${optsContas(c0)}</select></div>
+      <div class="field"><label for="ajS">Saldo correto da conta (R$)</label><input id="ajS" name="saldoReal" inputmode="decimal" value="${aj&&t.id?fmtInput(saldoReal):''}" placeholder="como aparece no banco"></div>
+      <p class="note full" id="ajPrev" style="margin:0"></p>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label for="trData">Data</label><input id="trData" name="data" type="date" required value="${t.data||hoje()}"></div>
+      <div class="field"><label for="trDesc">Descrição (opcional)</label><input id="trDesc" name="descricao" maxlength="80" value="${esc(t.descricao)}" placeholder="Ex.: Guardar na poupança"></div>
+    </div>${rodape(novo?'Salvar':'Salvar alterações')}</form>`;
+}
+function wireTransf(root, t){
+  const f=root.querySelector('form');
+  const sync=()=>{ const m=f.elements.modoValor.value;
+    root.querySelectorAll('[data-show="transferencia"]').forEach(el=>el.hidden=m!=='transferencia'); root.querySelectorAll('[data-show="ajuste"]').forEach(el=>el.hidden=m!=='ajuste');
+    const c=contaById(f.elements.contaAj.value), v=parseValor(f.elements.saldoReal.value), prev=root.querySelector('#ajPrev');
+    if(m==='ajuste' && c && prev){ const data=f.elements.data.value||hoje(); const atual=r2(saldoConta(c,data)-(t?.tipo==='ajuste'&&t.contaDestino===c.id&&t.data<=data?+t.valor:0));
+      prev.innerHTML = isNaN(v) ? `Saldo calculado em ${dataCurta(data)}: <b>${money(atual)}</b>. Informe o saldo correto para criar o ajuste.` : (r2(v-atual)===0 ? 'O saldo já está correto. Nenhum ajuste é necessário.' : `Ajuste de <b>${v-atual>0?'+':''}${money(v-atual)}</b> (calculado ${money(atual)}).`); } };
+  f.addEventListener('input',sync); f.addEventListener('change',sync); sync();
+}
+async function salvarTransf(f, t){
+  const E=f.elements, m=E.modoValor.value, data=E.data.value, descricao=E.descricao.value.trim();
+  if(!data) return 'Informe a data.';
+  if(m==='transferencia'){ const v=parseValor(E.valor.value);
+    if(!(v>0)) return 'Informe o valor da transferência.'; if(E.origem.value===E.destino.value) return 'Escolha contas diferentes para origem e destino.';
+    await gravar('transferencias',t?.id,{tipo:'transferencia',contaOrigem:E.origem.value,contaDestino:E.destino.value,valor:r2(v),data,descricao}); toast('Transferência registrada.'); return; }
+  const c=contaById(E.contaAj.value), v=parseValor(E.saldoReal.value); if(!c) return 'Escolha a conta.'; if(isNaN(v)) return 'Informe o saldo correto da conta.';
+  const atual=r2(saldoConta(c,data)-(t?.tipo==='ajuste'&&t.contaDestino===c.id&&t.data<=data?+t.valor:0)), dif=r2(v-atual);
+  if(dif===0){ if(t?.id){ chk(await sb.from('transferencias').delete().eq('id',t.id).eq('espaco_id',S.esp)); await carregarContas(); toast('Saldo já estava correto; ajuste removido.'); return; } return 'O saldo já está correto. Nenhum ajuste é necessário.'; }
+  await gravar('transferencias',t?.id,{tipo:'ajuste',contaOrigem:null,contaDestino:c.id,valor:dif,data,descricao:descricao||'Ajuste de saldo'}); toast(`Saldo de ${c.nome} ajustado (${dif>0?'+':''}${money(dif)}).`);
+}
+
+const acoesContas = {
+  novaConta: () => abrirModal(formConta(), async f=>{ const E=f.elements, v=parseValor(E.saldo.value);
+    if(!E.nome.value.trim()) return 'Informe o nome da conta.'; if(isNaN(v)) return 'Informe o saldo, por exemplo 1250,00 (pode ser 0).';
+    if(E.padrao.checked) for(const c of S.contas.filter(x=>x.padrao)) chk(await sb.from('contas').update({padrao:false}).eq('id',c.id).eq('espaco_id',S.esp));
+    await gravar('contas',null,{nome:E.nome.value.trim(),tipo:E.tipo.value,saldoInicial:r2(v),dataSaldo:E.data.value,padrao:E.padrao.checked||!contasAtivas().length,ativa:true,ordem:(S.contas||[]).length+1}); toast('Conta criada.'); }),
+  editConta: el => { const c=contaById(el.dataset.id); if(!c) return;
+    abrirModal(formConta(c),
+    async f=>{ const E=f.elements, v=parseValor(E.saldo.value); if(!E.nome.value.trim()) return 'Informe o nome da conta.'; if(isNaN(v)) return 'Informe o saldo.';
+      if(E.padrao.checked) for(const x of S.contas.filter(x=>x.padrao&&x.id!==c.id)) chk(await sb.from('contas').update({padrao:false}).eq('id',x.id).eq('espaco_id',S.esp));
+      await gravar('contas',c.id,{nome:E.nome.value.trim(),tipo:E.tipo.value,saldoInicial:r2(v),dataSaldo:E.data.value,padrao:E.padrao.checked,ativa:E.ativa.checked}); toast('Conta atualizada.'); }); },
+  delConta: el => { const c=contaById(el.dataset.id); if(!c) return; const n=S.desp.filter(d=>d.contaId===c.id).length+S.rec.filter(r=>r.contaId===c.id).length, nt=(S.transf||[]).filter(t=>t.contaOrigem===c.id||t.contaDestino===c.id).length;
+    confirmar('Excluir conta',`Excluir “${esc(c.nome)}”?${n?` ${n} lançamentos ficam sem conta e passam para a conta principal.`:''}${nt?` ${nt} transferências e ajustes desta conta serão apagados.`:''} Para guardar o histórico, prefira desmarcar “Conta em uso”.`,
+      [{t:'Excluir conta',fn:async()=>{ chk(await sb.from('contas').delete().eq('id',c.id).eq('espaco_id',S.esp)); await carregarContas(); await recarregar('despesas'); await recarregar('receitas'); toast('Conta excluída.'); }}]); },
+  novaTransf: () => { if(!contasAtivas().length){ toast('Cadastre uma conta primeiro.'); return acoesContas.novaConta(); } abrirModal(formTransf(), f=>salvarTransf(f,null), r=>wireTransf(r,null)); },
+  editTransf: el => { const t=(S.transf||[]).find(x=>x.id===el.dataset.id); if(t) abrirModal(formTransf(t), f=>salvarTransf(f,t), r=>wireTransf(r,t)); },
+  delTransf: el => { const t=(S.transf||[]).find(x=>x.id===el.dataset.id); if(!t) return;
+    confirmar('Excluir movimentação',`Excluir ${t.tipo==='ajuste'?'o ajuste':'a transferência'} de ${money(t.valor)} em ${dataBR(t.data)}?`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('transferencias').delete().eq('id',t.id).eq('espaco_id',S.esp)); await carregarContas(); toast('Movimentação excluída.'); }}]); },
+  estornar: el => { const d=S.desp.find(x=>x.id===el.dataset.id); if(!d) return; const resta=valorLiq(d);
+    abrirModal(`<form data-form="quick">${head('Registrar estorno')}<p class="muted" style="margin:0">${esc(d.descricao)} · ${money(d.valor)}${valorEstornado(d.id)?` · já estornado ${money(valorEstornado(d.id))}`:''}</p>
+      <div class="form-grid"><div class="field"><label for="esV">Valor devolvido (R$)</label><input id="esV" name="v" inputmode="decimal" required value="${fmtInput(resta)}"></div><div class="field"><label for="esD">Data</label><input id="esD" name="d" type="date" required value="${hoje()}"></div>${campoConta(d.contaId,'Devolvido na conta')}</div>
+      <p class="note">O estorno não conta como receita: ele reduz o gasto desta despesa e volta para o saldo da conta.</p>${rodape('Registrar estorno')}</form>`,
+    async f=>{ const v=parseValor(f.elements.v.value), data=f.elements.d.value; if(!(v>0)) return 'Informe o valor devolvido.'; if(v>resta+0.009) return `O valor passa do que falta estornar (${money(resta)}).`;
+      await inserir('receitas',{descricao:'Estorno · '+d.descricao,origem:'Reembolso',natureza:'estorno',estornoDe:d.id,valorPrevisto:r2(v),valorRecebido:r2(v),dataPrevista:data,dataEfetiva:data,situacao:'recebida',periodo:'',...(f.elements.contaId?{contaId:f.elements.contaId.value}:{})});
+      toast(`Estorno de ${money(v)} registrado.`); }); }
+};
+
 /* ---------- ações ---------- */
 const acoes = {
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
@@ -1148,7 +1313,8 @@ const acoes = {
   recarregarPagina: () => location.reload(),
   auth: el => { S.auth=el.dataset.v; S.authMsg=''; render(); },
   sair: async () => { await sb.auth.signOut(); },
-  novo: el => { if(el.dataset.tipo==='receita') abrirModal(formReceita(),salvarReceita,wireReceita);
+  novo: el => { if(el.dataset.tipo==='transferencia') return acoesContas.novaTransf();
+    if(el.dataset.tipo==='receita') abrirModal(formReceita(),salvarReceita,wireReceita);
     else { if(!S.cats.length){ fecharModal(); toast('Crie ao menos uma categoria em Configurações.'); S.view='config'; render(); return; } abrirModal(formDespesa(),salvarDespesa,wireDespesa); } },
   editar: el => { const col=el.dataset.col, id=el.dataset.id;
     if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(d) abrirModal(formDespesa(d),salvarDespesa,wireDespesa); }
@@ -1233,13 +1399,13 @@ const acoes = {
       fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam em Lançamentos.'); }},
         {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover(tab,fut.map(x=>x.id)); await remover('recorrencias',t.id); toast(R?'Receita fixa encerrada.':'Conta fixa encerrada.'); }}]
       :[{t:'Excluir',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
-  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[]};
+  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[],contas:S.contas||[],transferencias:S.transf||[]};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
-  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
+  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas, contas, transferências e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR') return 'Digite EXCLUIR em maiúsculas para confirmar.';
       for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) chk(await sb.from(t).delete().eq('espaco_id',S.esp));
-      for(const t of ['dividas','metas']){ try{ chk(await sb.from(t).delete().eq('espaco_id',S.esp)); }catch(_){} }
-      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); toast('Dados do espaço excluídos.'); }),
+      for(const t of ['dividas','metas','transferencias','contas']){ try{ chk(await sb.from(t).delete().eq('espaco_id',S.esp)); }catch(_){} }
+      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); await carregarContas(); toast('Dados do espaço excluídos.'); }),
   excluirConta: () => abrirModal(`<form data-form="quick">${head('Excluir minha conta')}<p style="margin:0">Sua conta, seu espaço pessoal e os espaços compartilhados que você criou serão apagados de forma definitiva. Espaços criados por outras pessoas continuam existindo para elas. Exporte seus dados antes.</p><div class="field"><label for="qX">Digite EXCLUIR MINHA CONTA para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir conta','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR MINHA CONTA') return 'Digite EXCLUIR MINHA CONTA em maiúsculas para confirmar.'; chk(await sb.rpc('excluir_minha_conta')); await sb.auth.signOut(); }),
   editarNome: () => acoes.personalizar(),
@@ -2030,7 +2196,7 @@ function blocoConferir(){
     <div class="list">${[...d.map(x=>rowDesp(x)),...r.map(x=>rowRec(x))].join('')}</div></section>`;
 }
 
-Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas);
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas, acoesContas);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{

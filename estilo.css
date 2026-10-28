@@ -615,3 +615,34 @@ form[data-form="rapidoNovo"],form[data-form="cupom"]{display:flex;flex-direction
 .pill.quitado{background:var(--sage-soft);color:var(--sage);font-weight:700;letter-spacing:.02em}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (max-width:600px){ .celebra{top:30%} .celebra-txt{font-size:28px;padding:8px 22px} }
+
+/* ---------- campos modernos (selects, datas, textos) em todo o sistema ---------- */
+:root{ --chev:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235B6976' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); --campo-h:44px }
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --chev:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2397A5B2' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") } }
+select{-webkit-appearance:none;appearance:none;background-image:var(--chev)!important;background-repeat:no-repeat!important;background-position:right 12px center!important;background-size:14px!important;padding-right:34px!important;cursor:pointer;text-overflow:ellipsis}
+select::-ms-expand{display:none}
+.field input,.field select,.field textarea,.space-pick select,.filters select,.slot select,.sel-ent select,table.cupom-itens input,table.cupom-itens select,.inline-input{
+  border:1px solid var(--line);border-radius:12px;background-color:var(--bg);color:var(--fg);font-size:15px;line-height:1.3;
+  transition:border-color .15s ease,box-shadow .15s ease,background-color .15s ease}
+.field input:not([type=checkbox]):not([type=radio]):not([type=file]),.field select,.space-pick select,.filters select{min-height:var(--campo-h);padding:10px 14px}
+.field textarea{padding:12px 14px;min-height:72px;resize:vertical}
+.field input:hover,.field select:hover,.field textarea:hover,.space-pick select:hover,.filters select:hover,.slot select:hover,.sel-ent select:hover,.inline-input:hover{border-color:color-mix(in srgb,var(--blue) 35%,var(--line))}
+.field input:focus,.field select:focus,.field textarea:focus,.space-pick select:focus,.filters select:focus,.slot select:focus,.sel-ent select:focus,.inline-input:focus,table.cupom-itens input:focus,table.cupom-itens select:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 4px color-mix(in srgb,var(--blue) 14%,transparent)}
+.field input::placeholder,.field textarea::placeholder{color:var(--muted);opacity:.75}
+.field label,.field .lbl{font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.01em;margin-bottom:6px;display:block}
+/* datas e horas: sem o visual nativo antigo */
+.field input[type=date],.field input[type=month],.field input[type=time]{-webkit-appearance:none;appearance:none;font-variant-numeric:tabular-nums;display:flex;align-items:center}
+input[type=date]::-webkit-date-and-time-value,input[type=month]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=date]::-webkit-calendar-picker-indicator,input[type=month]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer;border-radius:6px;padding:2px}
+input[type=date]::-webkit-calendar-picker-indicator:hover{opacity:.9;background:var(--surface)}
+/* números sem setas */
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+/* seletores compactos dentro de listas */
+.sel-ent select{min-height:32px;padding:5px 30px 5px 10px!important;border-radius:999px;font-size:12.5px;font-weight:600;background-color:var(--surface);background-position:right 10px center!important}
+.space-pick select{font-weight:600;border-radius:12px}
+.inline-input{border-radius:10px;padding:7px 10px}
+/* caixas de seleção e opções */
+input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
+.check{display:flex;align-items:center;gap:10px;cursor:pointer}
+@media (max-width:600px){ .field input:not([type=checkbox]),.field select,.field textarea{font-size:16px} }

@@ -554,10 +554,9 @@ function formDespesa(d){
   <div class="grupo"><span class="grupo-t">Valor e datas</span>
     <div class="form-grid">
       <div class="field"><label for="dValor" id="dValorLbl">${grupo?'Valor desta parcela (R$)':'Valor (R$)'}</label><input id="dValor" name="valor" inputmode="decimal" required value="${fmtInput(d.valor)}" placeholder="0,00"></div>
-      <div class="field"><label for="dVenc" id="dVencLbl">${grupo?'Vencimento desta parcela':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
+      <div class="field"><label for="dVenc" id="dVencLbl">${grupo?'Data de vencimento desta parcela':'Data de vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
       <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['pendente','Pendente'],['paga','Pago'],['prevista','Programado'],['cancelada','Cancelado']],d.situacao)}</select></div>
       <div class="field" data-show="paga"><label for="dPag">Pago em</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
-      ${campoEntradaPagar(d.entradaId,'dPer')}
       <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['variavel','Variável'],['fixa','Fixa']],d.comportamento)}</select></div>
       <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
       <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
@@ -590,7 +589,7 @@ function wireDespesa(root){
     const modo=E.modo?.value||'parcelada';
     if(novo){ root.querySelectorAll('[data-show="parcelada"]').forEach(el=>el.hidden=modo!=='parcelada'); root.querySelectorAll('[data-show="mensal"]').forEach(el=>el.hidden=modo!=='mensal');
       $('#dValorLbl').textContent = modo==='parcelada' ? (E.modoValor.value==='total'?'Valor total da compra (R$)':'Valor de cada parcela (R$)') : 'Valor (R$)';
-      $('#dVencLbl').textContent = modo==='parcelada' ? 'Vencimento desta parcela' : (modo==='mensal'?'Vencimento deste mês':'Vencimento'); }
+      $('#dVencLbl').textContent = modo==='parcelada' ? 'Data de vencimento desta parcela' : (modo==='mensal'?'Data de vencimento deste mês':'Data de vencimento'); }
     if(modo!=='parcelada' && novo) return;
     const A=parseInt(E.parcelaAtual.value)||1, N=parseInt(E.totalParcelas.value)||1, v=parseValor(E.valor.value), venc=E.vencimento.value;
     if(N<2||A<1||A>N){ prev.textContent='A parcela atual precisa estar entre 1 e o total de parcelas.'; return; }
@@ -688,7 +687,6 @@ function formReceita(r){
     <div class="form-grid">
       <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
       <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
-      ${ciclosOk()&&entradasCfg().length?`<div class="field"><label for="rPer">Esta receita é</label><select id="rPer" name="entradaId">${opts([...(novo?[['auto','Identificar pela data']]:[]),['','Entrada eventual (extra)'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])],novo?'auto':(r.entradaId||''))}</select></div>`:''}
       <div class="field full"><label>Tipo de receita</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!r.recorrenciaId}" data-act="modoValor" data-v="variavel">Única</button><button type="button" aria-pressed="${!!r.recorrenciaId}" data-act="modoValor" data-v="fixa">Recorrente (todo mês)</button></div><input type="hidden" name="modoValor" value="${r.recorrenciaId?'fixa':'variavel'}"></div>
       <p class="note full" data-show="fixa" style="margin:0">${r.recorrenciaId?'Receita fixa: entra em todos os meses com o mesmo valor e dia.':'Entra automaticamente em todos os meses a partir da data prevista, com o mesmo valor e dia. Os próximos 12 meses ficam sempre lançados.'}</p>
       ${r.recorrenciaId?`<div class="field full" data-show="fixa"><label>As alterações valem para</label>${segEscopo()}</div><p class="note full" data-show="variavel" style="margin:0">Ao mudar para única, a receita deixa de repetir: os meses futuros ainda não recebidos saem de Lançamentos.</p>`:''}
@@ -696,7 +694,7 @@ function formReceita(r){
   <div class="grupo"><span class="grupo-t">Previsto</span>
     <div class="form-grid">
       <div class="field"><label for="rPrev">Valor previsto (R$)</label><input id="rPrev" name="valorPrevisto" inputmode="decimal" required value="${fmtInput(r.valorPrevisto)}" placeholder="0,00"></div>
-      <div class="field"><label for="rData">Data prevista</label><input id="rData" name="dataPrevista" type="date" required value="${r.dataPrevista||''}"></div>
+      <div class="field"><label for="rData">Data de entrada</label><input id="rData" name="dataPrevista" type="date" required value="${r.dataPrevista||''}"></div>
     </div></div>
   <div class="grupo"><span class="grupo-t">Recebido</span>
     <div class="form-grid">
@@ -716,9 +714,12 @@ async function salvarReceita(f){
   if(!fd.dataPrevista) return 'Informe a data prevista.';
   let vr=null; if(fd.situacao==='recebida'){ vr=parseValor(fd.valorRecebido); if(isNaN(vr)) vr=vp; if(vr<0) return 'O valor recebido não pode ser negativo.'; }
   const ym=fd.dataPrevista.slice(0,7);
-  const entradaSel = fd.entradaId==='auto' ? (entradasCfg().find(e=>dataRegra(e,ym)===fd.dataPrevista)?.id||'') : (fd.entradaId||'');
+  const autoEntrada = () => { if(!ciclosOk() || !['Salário','Comissões'].includes(fd.origem)) return '';
+    const c=entradasCfg().map(e=>({e,dist:Math.abs(diasEntre(dataRegra(e,ym),fd.dataPrevista))})).filter(x=>x.dist<=3 && !S.rec.some(r=>r.entradaId===x.e.id && r.id!==id && ativa(r) && (r.dataPrevista||'').slice(0,7)===ym)).sort((a,b)=>a.dist-b.dist);
+    return c[0]?.e.id||''; };
+  const entradaSel = id ? (S.rec.find(x=>x.id===id)?.entradaId||'') : autoEntrada();
   const arq=await enviarArquivo();
-  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,...(fd.entradaId!==undefined?{entradaId:entradaSel||null}:{}),situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
+  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,...comEntrada(entradaSel),situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
   const fixa=fd.modoValor==='fixa';
   const modelo=()=>({tipo:'receita',descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),...comEntrada(entradaSel),inicio:ym,geradoAte:ym,ativo:true});
   if(id){ const old=S.rec.find(x=>x.id===id), t=old?.recorrenciaId?S.recor.find(x=>x.id===old.recorrenciaId):null;
@@ -985,7 +986,6 @@ function formDivida(d){
     <div class="field"><label for="dvJ">Juros ao mês (%)</label><input id="dvJ" name="juros" inputmode="decimal" value="${d.jurosMes?String(d.jurosMes).replace('.',','):''}" placeholder="0"></div>
     <div class="field"><label for="dvP">Pagamento mensal (R$)</label><input id="dvP" name="parcela" inputmode="decimal" value="${fmtInput(d.parcela)}" placeholder="parcela ou mínimo"></div>
     <div class="field"><label for="dvDia">Dia do vencimento</label><input id="dvDia" name="dia" type="number" min="1" max="31" value="${d.dia||''}"></div>
-    ${campoEntradaPagar(d.entradaId,'dvPer')}
     <div class="field"><label for="dvF">Forma de pagamento</label><select id="dvF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento||'Pix')}</select></div>
     <div class="field"><label for="dvK">Chave Pix (opcional)</label><input id="dvK" name="chave" maxlength="140" autocomplete="off" value="${esc(d.chavePix)}"></div>
     <div class="field full"><label for="dvO">Observação</label><input id="dvO" name="obs" maxlength="200" value="${esc(d.obs)}"></div></div>
@@ -1374,7 +1374,6 @@ function formCartao(c){
     <div class="field"><label for="kF">Dia de fechamento</label><input id="kF" name="fech" type="number" min="1" max="31" required value="${c.diaFechamento||''}"></div>
     <div class="field"><label for="kV">Dia de vencimento</label><input id="kV" name="venc" type="number" min="1" max="31" required value="${c.diaVencimento||''}"></div>
     ${temContas()&&contasAtivas().length?`<div class="field"><label for="kC">Fatura paga pela conta</label><select id="kC" name="conta">${optsContas(c.contaPagamento||contaPadrao()?.id)}</select></div>`:''}
-    ${campoEntradaPagar(c.entradaId,'kP')}
     ${novo?'':`<label class="check full"><input type="checkbox" name="ativo" ${c.ativo!==false?'checked':''}> Cartão em uso (desmarque para arquivar)</label>`}
   </div><p class="note">Compras feitas a partir do dia de fechamento entram na fatura seguinte. Os dias estão na fatura ou no app do banco.</p>
   ${novo?rodape('Cadastrar cartão'):`<p class="err" id="formErr"></p><footer><button type="button" class="btn danger" data-act="delCartao" data-id="${c.id}" style="margin-right:auto">Excluir</button><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primary" type="submit">Salvar</button></footer>`}</form>`;
@@ -1808,7 +1807,6 @@ const acoes = {
       <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
       <div class="field"><label for="tDia">Dia do recebimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
       <div class="field"><label for="tO">Origem</label><select id="tO" name="origem">${opts(ORIGENS.map(x=>[x,x]),t.origem||'Salário')}</select></div>
-      ${ciclosOk()&&entradasCfg().length?`<div class="field"><label for="tP">Esta receita é</label><select id="tP" name="entradaId">${opts([['','Entrada eventual'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])],t.entradaId||'')}</select></div>`:''}
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (lança todo mês)</label></div>
       <p class="note">A alteração vale para os meses ainda não recebidos, do atual em diante. Ao pausar, os meses futuros não recebidos saem de Lançamentos.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
@@ -1819,7 +1817,6 @@ const acoes = {
       <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
       <div class="field"><label for="tDia">Dia do vencimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
       <div class="field"><label for="tC">Categoria</label><select id="tC" name="categoria">${opts(S.cats.map(c=>[c.id,c.nome]),t.categoria)}</select></div>
-      ${campoEntradaPagar(t.entradaId,'tP')}
       <div class="field"><label for="tF">Forma de pagamento</label><select id="tF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),t.formaPagamento)}</select></div>
       <div class="field"><label for="tK">Chave Pix</label><input id="tK" name="chave" maxlength="140" autocomplete="off" value="${esc(t.chavePix)}"></div>
       <div class="field full"><label for="tCC">Pix copia e cola (opcional)</label><input id="tCC" name="copia" maxlength="600" autocomplete="off" value="${esc(t.pixCopiaCola)}"></div>

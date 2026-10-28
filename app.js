@@ -42,7 +42,7 @@ const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPA
 
 const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
 const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
-const NULOS = new Set(['conta_id','estorno_de','data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
+const NULOS = new Set(['conta_id','estorno_de','cartao_id','conta_pagamento','data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
 function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
 function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
 const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
@@ -55,6 +55,7 @@ const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
   {id:'financeiro',t:'Lançamentos',ic:'M3 7h18v12H3zM3 11h18M7 15h3'},
   {id:'planejamento',t:'Planejamento',ic:'M4 4h16v16H4zM4 9h16M9 4v16'},
+  {id:'cartoes',t:'Cartões',ic:'M3 6h18v12H3zM3 10h18M7 15h4'},
   {id:'relatorios',t:'Relatórios',ic:'M5 20V10M12 20V4M19 20v-7'},
   {id:'metas',t:'Metas',ic:'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zM12 12h.01'},
   {id:'config',t:'Configurações',ic:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z'}
@@ -116,9 +117,9 @@ const recorrentesFaltando = ym => recorD().filter(t=>t.ativo!==false && (t.inici
 
 function alertas(ym){
   const a=[], h=hoje();
-  const atras=S.desp.filter(d=>sitDesp(d)==='atrasada');
+  const atras=S.desp.filter(d=>sitDesp(d)==='atrasada' && !d.cartaoId);
   if(atras.length) a.push({k:'danger',t:`${atras.length} ${atras.length>1?'contas vencidas':'conta vencida'} sem pagamento registrado (${money(sum(atras,d=>d.valor))}).`,h:'Se já pagou, marque como paga para manter o saldo correto. Se não, priorize no próximo recebimento.'});
-  const breve=S.desp.filter(d=>['pendente','prevista'].includes(sitDesp(d))&&d.vencimento&&diasEntre(h,d.vencimento)<=3);
+  const breve=S.desp.filter(d=>!d.cartaoId&&['pendente','prevista'].includes(sitDesp(d))&&d.vencimento&&diasEntre(h,d.vencimento)<=3);
   if(breve.length) a.push({k:'warn',t:`${breve.length} ${breve.length>1?'contas vencem':'conta vence'} nos próximos 3 dias: ${breve.slice(0,3).map(d=>esc(d.descricao)).join(', ')}${breve.length>3?'…':''}.`,h:'Confira se o saldo do período cobre esses pagamentos.'});
   const p10=periodo(ym,'10'), p20=periodo(ym,'20');
   if(p10.comp>0 && p10.comp>p10.esper) a.push({k:'warn',t:`O período do dia 10 está sobrecarregado em ${money(p10.comp-p10.esper)}.`,h:'Veja no Planejamento quais contas podem ir para o dia 20. Nada é movido sem a sua decisão.'});
@@ -130,6 +131,7 @@ function alertas(ym){
   const sd=saldoDisponivel();
   if(sd!==null && ym===h.slice(0,7)){ const pr=proximoRecebimento(); const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
     const prev=r2(sd-sum(ate,d=>d.valor)); if(prev<0) a.push({k:'danger',t:`O saldo previsto até ${dataCurta(pr)} fica negativo (${money(prev)}).`,h:'As contas que vencem antes do próximo recebimento superam o saldo em conta.'}); }
+  a.push(...alertasCartoes());
   a.push(...alertasMetas(ym));
   const rm=recorrentesFaltando(ym);
   if(rm.length) a.push({k:'',t:`${rm.length} ${rm.length>1?'contas fixas ainda não foram lançadas':'conta fixa ainda não foi lançada'} em ${mesLabel(ym)}.`,h:'Use “Lançar contas fixas” no Planejamento para gerar esses compromissos.'});
@@ -191,7 +193,8 @@ async function abrirEspaco(id){
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
   for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
   for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
-  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas(); S.contas=undefined; S.transf=[]; S.contasErro=false; carregarContas();
+  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas(); S.contas=undefined; S.transf=[]; S.contasErro=false; carregarContas(); S.cartoes=undefined; S.pagFat=[]; S.cartoesErro=false; carregarCartoes();
+  for(const t of ['cartoes','pagamentos_fatura']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcc); S._tcc=setTimeout(carregarCartoes,400); });
   for(const t of ['contas','transferencias']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tct); S._tct=setTimeout(carregarContas,400); });
   S.canal.subscribe();
   S.fase='pronto'; render(); garantirRecorrentes();
@@ -207,7 +210,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,contas:undefined,transf:[],contasErro:false,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,contas:undefined,transf:[],contasErro:false,cartoes:undefined,pagFat:[],cartoesErro:false,cartaoSel:null,faturaSel:null,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -254,9 +257,9 @@ function render(){
   if(S.fase==='auth'){ $('#pageTitle').textContent='Meu Eixo'; v.innerHTML=vAuth(); setTimeout(()=>{ const i=v.querySelector('input'); i&&i.focus(); },30); return; }
   renderNav();
   const n=NAV.find(x=>x.id===S.view); $('#pageTitle').textContent=n?.t||'';
-  $('#monthNav').hidden = S.view==='config';
+  $('#monthNav').hidden = S.view==='config' || S.view==='cartoes';
   document.querySelector('.fab').hidden = false;
-  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,metas:vMetas};
+  const views={inicio:vInicio,financeiro:vFinanceiro,planejamento:vPlanejamento,relatorios:vRelatorios,config:vConfig,metas:vMetas,cartoes:vCartoes};
   v.innerHTML = (views[S.view]||vRoadmap)();
   ls.set('meuEixo.view',S.view);
   if(S.view==='config' && espAtual()?.tipo==='compartilhado' && S.membros===null) carregarMembros();
@@ -303,17 +306,18 @@ function rowDesp(d,o={}){
   const s=sitDesp(d), grupo=(+d.parcelas||1)>1, ops=[];
   const pix=d.pixCopiaCola||d.chavePix;
   if(d.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="despesas" data-id="${d.id}">${icon(I.check)}Conferido</button>`);
-  if(pix && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
-  if(s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`);
+  const noCartao=!!d.cartaoId && !!cartaoById(d.cartaoId);
+  if(pix && !noCartao && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
+  if(!noCartao&&s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`);
   if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   if(o.mover){ if(d.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="10">Dia 10</button>`); if(d.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="20">Dia 20</button>`); if(d.periodo) ops.push(`<button class="btn sm ghost" data-act="periodo" data-id="${d.id}" data-p="">Tirar do período</button>`); }
-  if(s==='paga' && !o.mover && temContas() && valorLiq(d)>0) ops.push(`<button class="btn sm ghost" data-act="estornar" data-id="${d.id}" title="Registrar estorno">Estorno</button>`);
+  if((s==='paga'||noCartao) && !o.mover && temContas() && valorLiq(d)>0) ops.push(`<button class="btn sm ghost" data-act="estornar" data-id="${d.id}" title="Registrar estorno">Estorno</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
   const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
   const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span><span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento?`<span>${esc(d.formaPagamento)}</span>`:''}${contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span>${noCartao?`${d.dataCompra?`<span>compra ${dataCurta(d.dataCompra)}</span>`:''}<span class="pill crt">${esc(cartaoById(d.cartaoId).nome)} · fatura ${esc(mesCurto(compDesp(d)))}</span>${s==='paga'?pillD(d):''}`:`<span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}`}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento&&!noCartao?`<span>${esc(d.formaPagamento)}</span>`:''}${!noCartao&&contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];
@@ -333,7 +337,8 @@ function vInicio(){
   const ym=S.mes, rs=resumo(ym), sd=saldoDisponivel(), pr=proximoRecebimento(), h=hoje();
   const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
   const prevAte = sd===null?null:r2(sd-sum(ate,d=>d.valor));
-  const prox=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
+  const fats = temCartoes() ? cartoesAtivos().flatMap(c=>faturasDoCartao(c).filter(f=>f.resta>0&&f.venc>=h).map(f=>({descricao:'Fatura '+c.nome,vencimento:f.venc,periodo:c.periodo,valor:f.resta}))) : [];
+  const prox=[...S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h),...fats].sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
   const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
   return `
   <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
@@ -581,7 +586,8 @@ const blocoPix = d => `<div class="grupo" data-show="pix">
 function formDespesa(d){
   const novo=!d; d=d||{situacao:'pendente',comportamento:'variavel',periodo:'',formaPagamento:'Pix',vencimento:S.mes===hoje().slice(0,7)?hoje():S.mes+'-10'};
   const grupo=(+d.parcelas||1)>1;
-  return `<form data-form="despesa" data-id="${d.id||''}">${head(novo?'Nova despesa':'Editar despesa')}
+  const comCartao = temCartoes() && cartoesAtivos().length;
+  return `<form data-form="despesa" data-id="${d.id||''}" data-grupo="${grupo?1:0}">${head(novo?'Nova despesa':'Editar despesa')}
   ${novo?`<div class="seg"><button type="button" aria-pressed="true">Despesa</button><button type="button" aria-pressed="false" data-act="novo" data-tipo="receita">Receita</button>${temContas()?`<button type="button" aria-pressed="false" data-act="novo" data-tipo="transferencia">Transferência</button>`:''}</div>`:''}
   ${blocoAnexo(d)}
   <div class="grupo"><span class="grupo-t">O que é</span>
@@ -617,7 +623,9 @@ function formDespesa(d){
       <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['variavel','Variável'],['fixa','Fixa']],d.comportamento)}</select></div>
       <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
       <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
+      ${comCartao?`<div class="field" data-cartao><label for="dCartao">Cartão</label><select id="dCartao" name="cartaoId">${opts([...(d.id&&!d.cartaoId?[['','Sem cartão']]:[]),...cartoesAtivos().map(c=>[c.id,c.nome])],d.id?(d.cartaoId||''):cartoesAtivos()[0].id)}</select></div>`:''}
       ${campoConta(d.contaId,'Sai da conta')}
+      ${comCartao?`<p class="note full" id="cartPrev" data-cartao style="margin:0"></p>`:''}
     </div></div>
   ${blocoPix(d)}
   <div class="field"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
@@ -628,6 +636,17 @@ function wireDespesa(root){
   const sync=()=>{
     root.querySelectorAll('[data-show="paga"]').forEach(el=>el.hidden=E.situacao.value!=='paga');
     root.querySelectorAll('[data-show="pix"]').forEach(el=>el.hidden=E.formaPagamento.value!=='Pix');
+    if(E.cartaoId){ const cred=E.formaPagamento.value==='Crédito', cm=cred && !!E.cartaoId.value, grupoEdit=!novo && f.dataset.grupo==='1';
+      root.querySelectorAll('[data-cartao]').forEach(el=>el.hidden=!cred);
+      ['dVenc','dSit','dPer','fConta','dPag'].forEach(id=>{ const el=root.querySelector('#'+id)?.closest('.field'); if(el && cm) el.hidden=true; else if(el && id!=='dPag') el.hidden=false; });
+      const lc=root.querySelector('label[for="dCompra"]'); if(lc) lc.textContent = cm ? 'Data da compra' : 'Data da compra';
+      E.dataCompra.required = cm; if(cm && novo && !E.dataCompra.value) E.dataCompra.value=hoje();
+      const cp=$('#cartPrev'), c=cm?cartaoById(E.cartaoId.value):null;
+      if(c && E.dataCompra.value && !grupoEdit){ const A=(novo && E.modo?.value==='parcelada') ? (parseInt(E.parcelaAtual.value)||1) : 1;
+        const fat=addMes(faturaDaCompra(c,E.dataCompra.value),A-1); E.vencimento.value=vencFatura(c,fat); if(novo) E.situacao.value='pendente';
+        if(cp) cp.innerHTML=`${novo&&E.modo?.value==='parcelada'?`A parcela ${A} `:'Entra '}na fatura de <b>${mesLabel(fat)}</b> (fecha ${dataCurta(fechFatura(c,fat))}, vence ${dataCurta(vencFatura(c,fat))}). O dinheiro sai da conta só no pagamento da fatura.`; }
+      else if(cp) cp.textContent = cm ? (grupoEdit ? 'Parcela de compra no cartão: a fatura desta parcela é mantida.' : 'Informe a data da compra.') : 'Escolha o cartão para a compra entrar na fatura certa.';
+      if(cm) root.querySelectorAll('[data-show="paga"]').forEach(el=>el.hidden=true); }
     const prev=$('#parcPrev'); if(!prev) return;
     const modo=E.modo?.value||'parcelada';
     if(novo){ root.querySelectorAll('[data-show="parcelada"]').forEach(el=>el.hidden=modo!=='parcelada'); root.querySelectorAll('[data-show="mensal"]').forEach(el=>el.hidden=modo!=='mensal');
@@ -645,13 +664,15 @@ function wireDespesa(root){
 }
 function camposDespesa(fd){
   return {descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim(),
-    chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():'', ...(fd.contaId!==undefined?{contaId:fd.contaId}:{})};
+    chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():'', ...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),
+    ...(fd.cartaoId!==undefined?(()=>{ const k=fd.formaPagamento==='Crédito'?fd.cartaoId:'', c=k?cartaoById(k):null; return c?{cartaoId:k,contaId:'',periodo:c.periodo||fd.periodo||''}:{cartaoId:''}; })():{})};
 }
 async function salvarDespesa(f){
   const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, valor=parseValor(fd.valor);
   if(!fd.descricao.trim()) return 'Informe a descrição.';
   if(!(valor>0)) return 'Informe um valor maior que zero, por exemplo 202,00.';
   if(!fd.categoria) return 'Escolha uma categoria.';
+  if(fd.formaPagamento==='Crédito' && fd.cartaoId && !fd.dataCompra) return 'Informe a data da compra no cartão.';
   if(!fd.vencimento) return 'Informe a data de vencimento.';
   const base=camposDespesa(fd), agora=new Date().toISOString();
   if(id) return editarDespesa(f,fd,base,valor);
@@ -1178,8 +1199,10 @@ function saldoConta(c, ate=hoje()){
   const base=c.dataSaldo; let s=+c.saldoInicial||0;
   if(!base || ate<base) return r2(s);
   const ehPadrao = contaPadrao()?.id===c.id, minha = x => x.contaId ? x.contaId===c.id : ehPadrao;
-  for(const r of S.rec) if(r.situacao==='recebida' && r.dataEfetiva && r.dataEfetiva>=base && r.dataEfetiva<=ate && minha(r)) s+= +r.valorRecebido||0;
-  for(const d of S.desp){ const dp=d.dataPagamento||d.vencimento; if(d.situacao==='paga' && dp && dp>=base && dp<=ate && minha(d)) s-= +d.valor||0; }
+  const deCartao = r => ehEstorno(r) && S.desp.find(d=>d.id===r.estornoDe)?.cartaoId;   // estorno no cartão abate a fatura, não entra na conta
+  for(const r of S.rec) if(r.situacao==='recebida' && r.dataEfetiva && r.dataEfetiva>=base && r.dataEfetiva<=ate && minha(r) && !deCartao(r)) s+= +r.valorRecebido||0;
+  for(const d of S.desp){ const dp=d.dataPagamento||d.vencimento; if(d.situacao==='paga' && dp && dp>=base && dp<=ate && minha(d) && (typeof compraSaiDaConta!=='function' || compraSaiDaConta(d))) s-= +d.valor||0; }
+  for(const p of S.pagFat||[]) if(p.data>=base && p.data<=ate && minha(p)) s-= +p.valor||0;
   for(const t of S.transf||[]){ if(!t.data || t.data<base || t.data>ate) continue;
     if(t.contaDestino===c.id) s+= +t.valor||0;
     if(t.tipo==='transferencia' && t.contaOrigem===c.id) s-= +t.valor||0; }
@@ -1304,6 +1327,166 @@ const acoesContas = {
       toast(`Estorno de ${money(v)} registrado.`); }); }
 };
 
+/* ---------- cartões de crédito e faturas (Etapa 2 da evolução) ----------
+   Compra no cartão = despesa ligada ao cartão, com vencimento = vencimento da fatura.
+   Pagamento da fatura = registro em pagamentos_fatura: tira dinheiro da conta,
+   não cria despesa nova. Assim compra, fatura e pagamento não se repetem. */
+const temCartoes = () => !S.cartoesErro && Array.isArray(S.cartoes);
+const cartoesAtivos = () => (S.cartoes||[]).filter(c=>c.ativo!==false).sort((a,b)=>(a.ordem-b.ordem)||a.nome.localeCompare(b.nome,'pt'));
+const cartaoById = id => (S.cartoes||[]).find(c=>c.id===id);
+const pad2 = n => String(n).padStart(2,'0');
+const diaNoMes = (ym,dia) => ym+'-'+pad2(Math.min(+dia||1,diasNoMes(ym)));
+/* mês (AAAA-MM) de vencimento da fatura em que cai uma compra feita em dt */
+function faturaDaCompra(c, dt){
+  const ym=dt.slice(0,7), dia=+dt.slice(8,10), F=+c.diaFechamento, V=+c.diaVencimento;
+  const fecha = dia >= Math.min(F,diasNoMes(ym)) ? addMes(ym,1) : ym;   // compra no dia do fechamento já vai para a próxima
+  return V > F ? fecha : addMes(fecha,1);
+}
+const vencFatura = (c,fat) => diaNoMes(fat,c.diaVencimento);
+const fechFatura = (c,fat) => diaNoMes(+c.diaVencimento > +c.diaFechamento ? fat : addMes(fat,-1), c.diaFechamento);
+const comprasCartao = c => S.desp.filter(d=>d.cartaoId===c.id && ativa(d));
+const pagsFatura = (c,fat) => (S.pagFat||[]).filter(p=>p.cartaoId===c.id && (fat===undefined || p.fatura===fat));
+function fatura(c, fat){
+  const C=comprasCartao(c).filter(d=>compDesp(d)===fat), total=sum(C,valorLiq), pg=pagsFatura(c,fat);
+  const pago=Math.max(sum(pg,p=>p.valor), sum(C.filter(d=>d.situacao==='paga'),valorLiq));
+  const resta=r2(Math.max(0,total-pago)), h=hoje(), venc=vencFatura(c,fat), fech=fechFatura(c,fat);
+  const status = total<=0 && !pg.length ? 'vazia' : resta<=0.009 ? 'paga' : h>venc ? 'vencida' : h>=fech ? 'fechada' : 'aberta';
+  return {fat, compras:C, pagamentos:pg, total, pago:r2(pago), resta, venc, fech, status};
+}
+function faturasDoCartao(c){
+  const m=new Set(comprasCartao(c).map(compDesp)); pagsFatura(c).forEach(p=>m.add(p.fatura)); m.add(faturaDaCompra(c,hoje()));
+  return [...m].filter(Boolean).sort().map(f=>fatura(c,f));
+}
+const faturaAtual = c => fatura(c, faturaDaCompra(c,hoje()));
+const limiteUsado = c => r2(faturasDoCartao(c).reduce((a,f)=>a+f.resta,0));
+const STATUS_FAT = {aberta:['Aberta','prevista'],fechada:['Fechada','pendente'],vencida:['Vencida','atrasada'],paga:['Paga','paga'],vazia:['Sem compras','']};
+const pillFat = f => `<span class="pill ${STATUS_FAT[f.status][1]}">${STATUS_FAT[f.status][0]}</span>`;
+/* uma fatura com pagamento registrado tira dinheiro da conta pelo pagamento, não pelas compras */
+const compraSaiDaConta = d => !d.cartaoId || !pagsFatura(cartaoById(d.cartaoId)||{id:d.cartaoId}, compDesp(d)).length;
+const creditoSemCartao = () => S.desp.filter(d=>d.formaPagamento==='Crédito' && !d.cartaoId && ativa(d));
+const pareceFatura = d => !d.cartaoId && /\b(fatura|cart[aã]o( de cr[eé]dito)?)\b/i.test(d.descricao||'') && ativa(d);
+
+async function carregarCartoes(){
+  const id=S.esp;
+  try{
+    const c=chk(await sb.from('cartoes').select('*').eq('espaco_id',id).order('ordem'));
+    const p=chk(await sb.from('pagamentos_fatura').select('*').eq('espaco_id',id).order('data',{ascending:false}).limit(2000));
+    if(S.esp!==id) return; S.cartoes=c.map(fromDb); S.pagFat=p.map(fromDb); S.cartoesErro=false;
+  }catch(e){ console.error(e); if(S.esp===id){ S.cartoes=[]; S.pagFat=[]; S.cartoesErro=true; } }
+  schedule();
+}
+
+/* barra de uso do limite */
+function barraLimite(c){ const L=+c.limite||0, u=limiteUsado(c), pc=L?u/L:0;
+  return L ? `<div class="lim"><div class="bar ${pc>1?'danger':pc>=.8?'warn':''}"><i style="width:${Math.min(100,pc*100).toFixed(0)}%"></i></div><div class="lim-txt"><span>Usado ${money(u)}</span><span><b class="${L-u<0?'neg':''}">${money(L-u)}</b> disponível de ${money(L)}</span></div></div>`
+    : `<p class="small muted" style="margin:0">Em aberto ${money(u)} · limite não informado</p>`; }
+
+function vCartoes(){
+  if(S.contasErro) return `<div class="alert warn"><span class="dot"></span><div><p>Execute primeiro a atualização <b>011_contas_movimentacoes.sql</b> no Supabase.</p></div></div>`;
+  if(S.cartoesErro) return `<div class="alert warn"><span class="dot"></span><div><p>Para usar cartões e faturas, execute a atualização <b>012_cartoes.sql</b> no Supabase (SQL Editor) e recarregue a página.</p></div></div>`;
+  if(S.cartoes===undefined) return `<div class="empty"><strong>Carregando cartões</strong>Um instante…</div>`;
+  const cs=cartoesAtivos(), sem=creditoSemCartao(), dup=S.desp.filter(pareceFatura);
+  const legado = sem.length&&cs.length ? `<div class="alert"><span class="dot"></span><div style="flex:1"><p>${sem.length} ${sem.length>1?'despesas no crédito estão':'despesa no crédito está'} sem cartão (${money(sum(sem,d=>d.valor))}).</p><p class="hint">Associe a um cartão para entrarem nas faturas. O mês de vencimento de cada uma é usado como mês da fatura.</p><div class="actions" style="margin-top:8px"><button class="btn sm primary" data-act="associarCredito">Associar a um cartão</button></div></div></div>` : '';
+  const dupl = dup.length&&cs.length ? `<div class="alert warn"><span class="dot"></span><div><p>Possível duplicidade: ${dup.slice(0,3).map(d=>`“${esc(d.descricao)}” (${money(d.valor)}, ${mesCurto(compDesp(d))})`).join(', ')}${dup.length>3?'…':''} ${dup.length>1?'parecem faturas lançadas':'parece uma fatura lançada'} como conta.</p><p class="hint">Se as compras desse mês estão no cartão, exclua a conta da fatura e use “Pagar fatura”. Assim o valor não é contado duas vezes.</p></div></div>` : '';
+  if(!cs.length) return `<div class="empty"><strong>Nenhum cartão cadastrado</strong>Cadastre seus cartões com limite, dia de fechamento e dia de vencimento. Depois, ao lançar uma despesa no “Crédito”, escolha o cartão: o Meu Eixo coloca a compra na fatura certa.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novoCartao">${icon(I.plus)}Cadastrar cartão</button></div></div>`;
+  const sel = cartaoById(S.cartaoSel)&&cartaoById(S.cartaoSel).ativo!==false ? cartaoById(S.cartaoSel) : cs[0];
+  return `${dupl}${legado}
+  <section><div class="section-head"><h2>Seus cartões</h2><p>Compras entram na fatura pelo dia de fechamento</p><div class="right"><button class="btn sm" data-act="novoCartao">${icon(I.plus)}Novo cartão</button></div></div>
+    <div class="cartoes">${cs.map(c=>{ const fa=faturaAtual(c), prox=fatura(c,addMes(fa.fat,1)), parc=comprasCartao(c).filter(d=>(+d.parcelas||1)>1 && compDesp(d)>fa.fat);
+      return `<article class="cartao ${c.id===sel.id?'sel':''}"><button type="button" class="cartao-top" data-act="verCartao" data-id="${c.id}"><span class="cartao-nome">${esc(c.nome)}</span><span class="small muted">fecha dia ${c.diaFechamento} · vence dia ${c.diaVencimento}</span></button>
+        ${barraLimite(c)}
+        <div class="cartao-figs"><div><span class="lbl">Fatura atual · ${esc(mesCurto(fa.fat))}</span><b>${money(fa.total)}</b><span class="small muted">${fa.status==='aberta'?`fecha ${dataCurta(fa.fech)}`:STATUS_FAT[fa.status][0].toLowerCase()} · vence ${dataCurta(fa.venc)}</span></div>
+          <div><span class="lbl">Próxima fatura</span><b>${money(prox.total)}</b><span class="small muted">${parc.length?`${money(sum(parc,valorLiq))} em parcelas futuras`:'sem parcelas futuras'}</span></div></div>
+      </article>`; }).join('')}</div></section>
+  ${vFaturas(sel)}`;
+}
+function vFaturas(c){
+  const fs=faturasDoCartao(c), atual=faturaDaCompra(c,hoje());
+  const visiveis=fs.filter(f=>f.fat>=addMes(atual,-3) || f.status==='vencida' || f.status==='fechada');
+  const fsel = visiveis.find(f=>f.fat===S.faturaSel) || visiveis.find(f=>f.fat===atual) || visiveis[0];
+  const f=fsel ? fatura(c,fsel.fat) : null;
+  return `<section class="panel"><div class="section-head" style="margin-bottom:10px"><h3 style="margin:0">Faturas · ${esc(c.nome)}</h3><div class="right"><button class="btn sm ghost" data-act="editCartao" data-id="${c.id}">${icon(I.edit)}Editar cartão</button></div></div>
+    <div class="fat-meses">${visiveis.map(x=>`<button type="button" class="fat-mes ${x.fat===f?.fat?'sel':''}" data-act="verFatura" data-v="${x.fat}"><span>${esc(mesCurto(x.fat))}</span><b class="num">${money(x.total)}</b>${x.status!=='vazia'?`<i class="st ${x.status}"></i>`:''}</button>`).join('')}</div>
+    ${f?`<div class="fat-head"><div><div class="fat-tit">Fatura de ${mesLabel(f.fat)} ${pillFat(f)}</div><div class="small muted">fecha ${dataBR(f.fech)} · vence ${dataBR(f.venc)}</div></div>
+      <div class="fat-vals"><div><span class="lbl">Total</span><b>${money(f.total)}</b></div><div><span class="lbl">Pago</span><b class="pos">${money(f.pago)}</b></div><div><span class="lbl">Falta pagar</span><b class="${f.status==='vencida'?'neg':''}">${money(f.resta)}</b></div></div>
+      ${f.resta>0?`<button class="btn primary" data-act="pagarFatura" data-id="${c.id}" data-v="${f.fat}">${icon(I.check)}Pagar fatura</button>`:''}</div>
+      ${f.compras.length?`<div class="list">${[...f.compras].sort((a,b)=>String(b.dataCompra||b.vencimento).localeCompare(String(a.dataCompra||a.vencimento))).map(d=>rowDesp(d)).join('')}</div>`:`<p class="small muted">Nenhuma compra nesta fatura.</p>`}
+      ${f.pagamentos.length?`<h4 class="sub-h">Pagamentos</h4><div class="list">${f.pagamentos.map(p=>`<div class="row"><div><div class="t">Pagamento da fatura</div><div class="meta"><span>${dataBR(p.data)}</span>${contaNome(p.contaId||contaPadrao()?.id)?`<span>${esc(contaNome(p.contaId||contaPadrao()?.id))}</span>`:''}</div></div><div class="v">${money(p.valor)}</div><div class="ops"><button class="btn sm ghost" data-act="delPagFatura" data-id="${p.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:''}
+      <p class="note" style="margin-top:12px">As compras contam como gasto no mês da fatura. O dinheiro só sai da conta quando você registra o pagamento da fatura.</p>`:'<p class="small muted">Sem faturas.</p>'}
+  </section>`;
+}
+
+function formCartao(c){
+  c=c||{}; const novo=!c.id;
+  return `<form data-form="quick">${head(novo?'Novo cartão':'Editar cartão')}<div class="form-grid">
+    <div class="field full"><label for="kN">Nome</label><input id="kN" name="nome" required maxlength="40" value="${esc(c.nome)}" placeholder="Ex.: Nubank, Itaú Visa"></div>
+    <div class="field"><label for="kL">Limite total (R$)</label><input id="kL" name="limite" inputmode="decimal" value="${fmtInput(c.limite??'')}" placeholder="0,00"></div>
+    <div class="field"><label for="kF">Dia de fechamento</label><input id="kF" name="fech" type="number" min="1" max="31" required value="${c.diaFechamento||''}"></div>
+    <div class="field"><label for="kV">Dia de vencimento</label><input id="kV" name="venc" type="number" min="1" max="31" required value="${c.diaVencimento||''}"></div>
+    ${temContas()&&contasAtivas().length?`<div class="field"><label for="kC">Fatura paga pela conta</label><select id="kC" name="conta">${optsContas(c.contaPagamento||contaPadrao()?.id)}</select></div>`:''}
+    <div class="field"><label for="kP">Pagar com o recebimento</label><select id="kP" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],c.periodo||'')}</select></div>
+    ${novo?'':`<label class="check full"><input type="checkbox" name="ativo" ${c.ativo!==false?'checked':''}> Cartão em uso (desmarque para arquivar)</label>`}
+  </div><p class="note">Compras feitas a partir do dia de fechamento entram na fatura seguinte. Os dias estão na fatura ou no app do banco.</p>
+  ${novo?rodape('Cadastrar cartão'):`<p class="err" id="formErr"></p><footer><button type="button" class="btn danger" data-act="delCartao" data-id="${c.id}" style="margin-right:auto">Excluir</button><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primary" type="submit">Salvar</button></footer>`}</form>`;
+}
+function lerCartao(f){ const E=f.elements, L=E.limite.value.trim()?parseValor(E.limite.value):0, F=+E.fech.value, V=+E.venc.value;
+  if(!E.nome.value.trim()) return 'Informe o nome do cartão.'; if(isNaN(L)||L<0) return 'Informe o limite, por exemplo 5000,00.';
+  if(!(F>=1&&F<=31)||!(V>=1&&V<=31)) return 'Informe os dias de fechamento e vencimento (1 a 31).'; if(F===V) return 'O fechamento e o vencimento não podem ser no mesmo dia.';
+  return {nome:E.nome.value.trim(),limite:r2(L),diaFechamento:F,diaVencimento:V,contaPagamento:E.conta?.value||null,periodo:E.periodo.value,...(E.ativo?{ativo:E.ativo.checked}:{})}; }
+async function gravarCartao(id, patch){
+  if(id) chk(await sb.from('cartoes').update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp)); else chk(await sb.from('cartoes').insert({...toDb(patch),espaco_id:S.esp}));
+  await carregarCartoes();
+}
+/* marca as compras da fatura como pagas (ou volta para pendente) conforme o total pago */
+async function sincronizarFatura(c, fat, reverter=false){
+  const f=fatura(c,fat), pagoPg=sum(f.pagamentos,p=>p.valor), quitada=f.total>0 && pagoPg>=f.total-0.009;
+  if(quitada){ const ult=[...f.pagamentos].sort((a,b)=>b.data.localeCompare(a.data))[0], ids=f.compras.filter(d=>d.situacao!=='paga').map(d=>d.id);
+    if(ids.length) chk(await sb.from('despesas').update({situacao:'paga',data_pagamento:ult.data}).in('id',ids).eq('espaco_id',S.esp)); }
+  else if(reverter){ const ids=f.compras.filter(d=>d.situacao==='paga').map(d=>d.id);
+    if(ids.length) chk(await sb.from('despesas').update({situacao:'pendente',data_pagamento:null}).in('id',ids).eq('espaco_id',S.esp)); }
+  await recarregar('despesas');
+}
+
+const acoesCartoes = {
+  novoCartao: () => abrirModal(formCartao(), async f=>{ const d=lerCartao(f); if(typeof d==='string') return d; await gravarCartao(null,{...d,ativo:true,ordem:(S.cartoes||[]).length+1}); toast('Cartão cadastrado.'); }),
+  editCartao: el => { const c=cartaoById(el.dataset.id); if(c) abrirModal(formCartao(c), async f=>{ const d=lerCartao(f); if(typeof d==='string') return d; await gravarCartao(c.id,d); toast('Cartão atualizado.'); }); },
+  delCartao: el => { const c=cartaoById(el.dataset.id); if(!c) return; const n=comprasCartao(c).length;
+    confirmar('Excluir cartão',`Excluir “${esc(c.nome)}”?${n?` ${n} compras continuam em Lançamentos, sem cartão.`:''} Os pagamentos de fatura deste cartão serão apagados. Para guardar o histórico, prefira desmarcar “Cartão em uso”.`,[{t:'Excluir cartão',fn:async()=>{ chk(await sb.from('cartoes').delete().eq('id',c.id).eq('espaco_id',S.esp)); await carregarCartoes(); await recarregar('despesas'); toast('Cartão excluído.'); }}]); },
+  verCartao: el => { S.cartaoSel=el.dataset.id; S.faturaSel=null; render(); },
+  verFatura: el => { S.faturaSel=el.dataset.v; render(); },
+  pagarFatura: el => { const c=cartaoById(el.dataset.id); if(!c) return; const f=fatura(c,el.dataset.v);
+    abrirModal(`<form data-form="quick">${head('Pagar fatura')}<p class="muted" style="margin:0">${esc(c.nome)} · fatura de ${mesLabel(f.fat)} · vence ${dataBR(f.venc)}</p>
+      <div class="form-grid"><div class="field"><label for="pfV">Valor pago (R$)</label><input id="pfV" name="v" inputmode="decimal" required value="${fmtInput(f.resta)}"></div><div class="field"><label for="pfD">Pago em</label><input id="pfD" name="d" type="date" required value="${hoje()}"></div>${campoConta(c.contaPagamento,'Sai da conta')}</div>
+      <p class="note">Falta pagar ${money(f.resta)}. O pagamento sai da conta escolhida e não vira uma despesa nova: as compras da fatura já estão contadas.${f.resta>0?' Pagamento parcial também pode ser registrado.':''}</p>${rodape('Registrar pagamento')}</form>`,
+    async fm=>{ const v=parseValor(fm.elements.v.value), d=fm.elements.d.value; if(!(v>0)) return 'Informe o valor pago.';
+      chk(await sb.from('pagamentos_fatura').insert({...toDb({cartaoId:c.id,fatura:f.fat,valor:r2(v),data:d,contaId:fm.elements.contaId?.value||null}),espaco_id:S.esp}));
+      await carregarCartoes(); await sincronizarFatura(c,f.fat); const nf=fatura(c,f.fat);
+      toast(nf.resta<=0.009?'Fatura paga. As compras foram marcadas como pagas.':`Pagamento registrado. Falta ${money(nf.resta)}.`); }); },
+  delPagFatura: el => { const p=(S.pagFat||[]).find(x=>x.id===el.dataset.id); if(!p) return; const c=cartaoById(p.cartaoId);
+    confirmar('Excluir pagamento',`Excluir o pagamento de ${money(p.valor)} em ${dataBR(p.data)}?`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('pagamentos_fatura').delete().eq('id',p.id).eq('espaco_id',S.esp)); await carregarCartoes(); if(c) await sincronizarFatura(c,p.fatura,true); toast('Pagamento excluído.'); }}]); },
+  associarCredito: () => { const sem=creditoSemCartao(), cs=cartoesAtivos(); if(!sem.length||!cs.length) return;
+    abrirModal(`<form data-form="quick">${head('Associar ao cartão')}<p class="muted" style="margin:0">${sem.length} ${sem.length>1?'despesas':'despesa'} no crédito, ${money(sum(sem,d=>d.valor))}.</p>
+      <div class="field"><label for="asC">Cartão</label><select id="asC" name="c">${opts(cs.map(c=>[c.id,c.nome]))}</select></div>
+      <div class="list" style="max-height:240px;overflow:auto">${sem.sort((a,b)=>(b.vencimento||'').localeCompare(a.vencimento||'')).map(d=>`<label class="check" style="padding:6px 0"><input type="checkbox" name="ids" value="${d.id}" checked> ${esc(d.descricao)} · ${money(d.valor)} · fatura ${esc(mesCurto(compDesp(d)))}</label>`).join('')}</div>
+      <p class="note">O mês de vencimento de cada despesa vira o mês da fatura. Despesas já marcadas como pagas continuam pagas.</p>${rodape('Associar')}</form>`,
+    async f=>{ const ids=[...f.querySelectorAll('[name=ids]:checked')].map(x=>x.value); if(!ids.length) return 'Marque ao menos uma despesa.';
+      const c=cartaoById(f.elements.c.value); chk(await sb.from('despesas').update({cartao_id:c.id,conta_id:null}).in('id',ids).eq('espaco_id',S.esp)); await recarregar('despesas'); toast(`${ids.length} ${ids.length>1?'despesas associadas':'despesa associada'} a ${c.nome}.`); }); }
+};
+
+/* alertas de cartão */
+function alertasCartoes(){
+  const a=[]; if(!temCartoes()) return a; const h=hoje();
+  for(const c of cartoesAtivos()){
+    for(const f of faturasDoCartao(c)){
+      if(f.resta<=0) continue;
+      if(f.status==='vencida') a.push({k:'danger',t:`Fatura ${esc(c.nome)} de ${mesLabel(f.fat)} venceu em ${dataCurta(f.venc)}: falta pagar ${money(f.resta)}.`,h:'Se já pagou, registre em Cartões › Pagar fatura.'});
+      else if(diasEntre(h,f.venc)<=5) a.push({k:'warn',t:`Fatura ${esc(c.nome)} vence ${f.venc===h?'hoje':'em '+dataCurta(f.venc)}: ${money(f.resta)}.`,h:'Confira se a conta de pagamento tem saldo.'});
+    }
+    const L=+c.limite; if(L){ const u=limiteUsado(c); if(u>=L*.9) a.push({k:u>L?'danger':'warn',t:`${esc(c.nome)}: ${Math.round(u/L*100)}% do limite em uso (${money(L-u)} disponível).`,h:'Parcelas futuras também ocupam o limite.'}); }
+  }
+  return a;
+}
+
 /* ---------- ações ---------- */
 const acoes = {
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
@@ -1399,13 +1582,13 @@ const acoes = {
       fut.length?[{t:'Excluir só o modelo',cls:'',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído. Os lançamentos continuam em Lançamentos.'); }},
         {t:`Excluir modelo e meses futuros (${fut.length})`,fn:async()=>{ await remover(tab,fut.map(x=>x.id)); await remover('recorrencias',t.id); toast(R?'Receita fixa encerrada.':'Conta fixa encerrada.'); }}]
       :[{t:'Excluir',fn:async()=>{ await remover('recorrencias',t.id); toast('Modelo excluído.'); }}]); },
-  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[],contas:S.contas||[],transferencias:S.transf||[]};
+  exportar: () => { const data={app:'Meu Eixo',espaco:espAtual()?.nome,exportadoEm:new Date().toISOString(),config:S.cfg,categorias:S.cats,receitas:S.rec,despesas:S.desp,recorrencias:S.recor,orcamentos:Object.values(S.orc),dividas:S.dividas||[],metas:S.metas||[],contas:S.contas||[],transferencias:S.transf||[],cartoes:S.cartoes||[],pagamentosFatura:S.pagFat||[]};
     baixar(`meu-eixo-${(espAtual()?.nome||'dados').toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${hoje()}.json`,JSON.stringify(data,null,2)); toast('Arquivo de exportação gerado.'); },
-  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas, contas, transferências e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
+  apagarTudo: () => abrirModal(`<form data-form="quick">${head('Excluir todos os dados do espaço')}<p style="margin:0">Apaga receitas, despesas, recorrências, orçamentos, dívidas, metas, contas, cartões, transferências e o saldo inicial do espaço “${esc(espAtual()?.nome)}”. As categorias são mantidas. Exporte antes se quiser guardar uma cópia.</p><div class="field"><label for="qX">Digite EXCLUIR para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir tudo','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR') return 'Digite EXCLUIR em maiúsculas para confirmar.';
       for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) chk(await sb.from(t).delete().eq('espaco_id',S.esp));
-      for(const t of ['dividas','metas','transferencias','contas']){ try{ chk(await sb.from(t).delete().eq('espaco_id',S.esp)); }catch(_){} }
-      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); await carregarContas(); toast('Dados do espaço excluídos.'); }),
+      for(const t of ['dividas','metas','pagamentos_fatura','cartoes','transferencias','contas']){ try{ chk(await sb.from(t).delete().eq('espaco_id',S.esp)); }catch(_){} }
+      for(const t of ['despesas','receitas','recorrencias','orcamentos','configuracoes']) await recarregar(t); await carregarMetas(); await carregarContas(); await carregarCartoes(); toast('Dados do espaço excluídos.'); }),
   excluirConta: () => abrirModal(`<form data-form="quick">${head('Excluir minha conta')}<p style="margin:0">Sua conta, seu espaço pessoal e os espaços compartilhados que você criou serão apagados de forma definitiva. Espaços criados por outras pessoas continuam existindo para elas. Exporte seus dados antes.</p><div class="field"><label for="qX">Digite EXCLUIR MINHA CONTA para confirmar</label><input id="qX" name="x" autocomplete="off"></div>${rodape('Excluir conta','danger')}</form>`,
     async f=>{ if(f.elements.x.value.trim()!=='EXCLUIR MINHA CONTA') return 'Digite EXCLUIR MINHA CONTA em maiúsculas para confirmar.'; chk(await sb.rpc('excluir_minha_conta')); await sb.auth.signOut(); }),
   editarNome: () => acoes.personalizar(),
@@ -2196,7 +2379,7 @@ function blocoConferir(){
     <div class="list">${[...d.map(x=>rowDesp(x)),...r.map(x=>rowRec(x))].join('')}</div></section>`;
 }
 
-Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas, acoesContas);
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas, acoesContas, acoesCartoes);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{

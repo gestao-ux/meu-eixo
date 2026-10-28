@@ -333,35 +333,6 @@ function rowRec(r,o={}){
 const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
 
 /* ---------- telas ---------- */
-function vInicio(){
-  const ym=S.mes, rs=resumo(ym), sd=saldoDisponivel(), pr=proximoRecebimento(), h=hoje();
-  const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
-  const prevAte = sd===null?null:r2(sd-sum(ate,d=>d.valor));
-  const fats = temCartoes() ? cartoesAtivos().flatMap(c=>faturasDoCartao(c).filter(f=>f.resta>0&&f.venc>=h).map(f=>({descricao:'Fatura '+c.nome,vencimento:f.venc,periodo:c.periodo,valor:f.resta}))) : [];
-  const prox=[...S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h),...fats].sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
-  const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length;
-  return `
-  <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
-  ${blocoConferir()}
-  ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Registre seu saldo atual em Configurações, depois cadastre suas receitas e contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="ir" data-v="config">Definir saldo inicial</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
-  <section><div class="section-head"><h2>Visão financeira</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
-    <div class="kpis">
-      <div class="kpi"><span class="lbl">Receitas do mês</span><span class="val pos">${money(rs.recReal)}</span><span class="sub">de ${money(rs.recPrev)} previstos</span></div>
-      <div class="kpi"><span class="lbl">Despesas do mês</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} já pagos</span></div>
-      <div class="kpi"><span class="lbl">Contas pendentes</span><span class="val">${money(rs.pendVal)}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'lançamento':'lançamentos'}</span></div>
-      <div class="kpi"><span class="lbl">Livre para não planejados</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">receitas menos todas as despesas do mês</span></div>
-    </div></section>
-  <div class="grid2">
-    <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
-    <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillP(d.periodo)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>
-  </div>
-  <div class="grid2">
-    <section class="panel"><h3>Composição das despesas</h3><div class="list">${linha('Despesas fixas',money(rs.fixas))}${linha('Despesas variáveis',money(rs.variaveis))}${linha('Parcelas neste mês',money(rs.parcelas))}${linha('Parcelas a pagar (todos os meses)',money(sum(parcelasFuturas(),d=>d.valor)))}</div></section>
-    <section class="panel"><h3>Maiores despesas do mês</h3>${(()=>{ const top=[...rs.D].sort((a,b)=>(+b.valor)-(+a.valor)).slice(0,5);
-      return top.length?`<div class="list">${top.map((d,i)=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${i+1}. ${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}</span><span>${sitDesp(d)==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma despesa em ${mesLabel(ym)}.</p>`; })()}</section>
-  </div>`;
-}
-
 function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
   if(f.sit) D=D.filter(d=>sitDesp(d)===f.sit); if(f.cat) D=D.filter(d=>d.categoria===f.cat);
@@ -1487,6 +1458,139 @@ function alertasCartoes(){
   return a;
 }
 
+/* ---------- painel do Início (Etapa 3 da evolução) ---------- */
+const fimMes = ym => ym+'-'+String(diasNoMes(ym)).padStart(2,'0');
+const ehReceitaReal = r => ativa(r) && r.natureza!=='estorno';
+/* próxima entrada prevista (receita ainda não recebida, a partir de hoje) */
+function proximaEntrada(){
+  const h=hoje(), R=S.rec.filter(r=>ehReceitaReal(r) && r.situacao!=='recebida' && r.dataPrevista && r.dataPrevista>=h).sort((a,b)=>a.dataPrevista.localeCompare(b.dataPrevista));
+  if(!R.length) return null; const d=R[0].dataPrevista, mesmas=R.filter(r=>r.dataPrevista===d);
+  return {data:d, valor:sum(mesmas,r=>r.valorPrevisto), descricao:mesmas.map(r=>r.descricao).join(', ')};
+}
+/* faturas com algo a pagar, como compromissos com data */
+const faturasAPagar = () => temCartoes() ? cartoesAtivos().flatMap(c=>faturasDoCartao(c).filter(f=>f.resta>0).map(f=>({cartao:c,...f}))) : [];
+/* tudo o que precisa sair antes de uma data (inclui o que já venceu) */
+function compromissosAte(lim){
+  const D=S.desp.filter(d=>ativa(d) && !d.cartaoId && d.situacao!=='paga' && d.vencimento && d.vencimento<lim);
+  const F=faturasAPagar().filter(f=>f.venc<lim);
+  return {D, F, contas:sum(D,valorLiq), faturas:r2(F.reduce((a,f)=>a+f.resta,0)), total:r2(sum(D,valorLiq)+F.reduce((a,f)=>a+f.resta,0))};
+}
+/* Disponível para gastar = saldo em conta − compromissos que vencem antes da próxima entrada */
+function disponivel(){
+  if(!(temContas() && contasAtivas().length)) return null;
+  const pe=proximaEntrada(), lim=pe?pe.data:addMes(hoje().slice(0,7),1)+'-01', saldo=saldoEmConta(), c=compromissosAte(lim);
+  return {saldo, pe, lim, c, livre:r2(saldo-c.total)};
+}
+/* saldo dia a dia do mês: realizado até hoje, previsto depois */
+function serieSaldoMes(ym){
+  if(!(temContas() && contasAtivas().length) || ym>hoje().slice(0,7)) return null;
+  const h=hoje(), n=diasNoMes(ym), out=[]; let proj=null;
+  for(let i=1;i<=n;i++){ const d=ym+'-'+String(i).padStart(2,'0');
+    if(d<=h){ out.push({d,v:saldoEmConta(d),prev:false}); continue; }
+    if(proj===null){ proj=saldoEmConta(h);
+      proj-= S.desp.filter(x=>ativa(x)&&!x.cartaoId&&x.situacao!=='paga'&&x.vencimento&&x.vencimento<=h).reduce((a,x)=>a+valorLiq(x),0);
+      proj-= faturasAPagar().filter(f=>f.venc<=h).reduce((a,f)=>a+f.resta,0); }
+    proj+= sum(S.rec.filter(r=>ehReceitaReal(r)&&r.situacao!=='recebida'&&r.dataPrevista===d),r=>r.valorPrevisto);
+    proj-= sum(S.desp.filter(x=>ativa(x)&&!x.cartaoId&&x.situacao!=='paga'&&x.vencimento===d),valorLiq);
+    proj-= faturasAPagar().filter(f=>f.venc===d).reduce((a,f)=>a+f.resta,0);
+    out.push({d,v:r2(proj),prev:true}); }
+  return out;
+}
+const compacto = v => { const a=Math.abs(v); return (v<0?'−':'')+(a>=1000?'R$ '+(Math.round(a/100)/10).toLocaleString('pt-BR')+' mil':'R$ '+Math.round(a)); };
+const tickLimpo = m => { const p=Math.pow(10,Math.floor(Math.log10(Math.max(1,m)))); for(const k of [1,2,2.5,5,10]) if(k*p>=m) return k*p; return 10*p; };
+
+function graficoSaldo(serie){
+  const vw=($('#view')?.clientWidth||900), W=Math.max(300,Math.min(1600,vw-(vw>700?110:66))), H=W<500?200:240, L=58,R=12,T=14,B=26, iw=W-L-R, ih=H-T-B;   // 1 unidade = 1 px: texto não escala
+  const vs=serie.map(p=>p.v), mn=Math.min(0,...vs), mx=Math.max(0,...vs), passoY=tickLimpo(((mx-mn)||1)/3), top=Math.ceil(mx/passoY)*passoY||passoY, bot=Math.floor(mn/passoY)*passoY;
+  const x=i=>L+(serie.length>1?i/(serie.length-1)*iw:iw/2), y=v=>T+(top-v)/(top-bot||1)*ih;
+  const pts=serie.map((p,i)=>[x(i),y(p.v)]), iH=serie.findIndex(p=>p.prev), corte=iH<0?serie.length:iH;
+  const real=pts.slice(0,corte), prev=pts.slice(Math.max(0,corte-1));
+  const path=a=>a.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=real.length>1?`${path(real)} L${real[real.length-1][0].toFixed(1)} ${y(Math.max(bot,0)).toFixed(1)} L${real[0][0].toFixed(1)} ${y(Math.max(bot,0)).toFixed(1)} Z`:'';
+  const imin=vs.indexOf(Math.min(...vs)), ticks=[]; for(let t=bot;t<=top+0.01;t+=passoY) ticks.push(Math.round(t));
+  const passo=W<500?7:W<900?5:3, cw=iw/Math.max(1,serie.length-1);
+  return `<div class="chart" role="img" aria-label="Saldo em conta ao longo do mês: menor saldo ${money(vs[imin])} em ${dataCurta(serie[imin].d)}">
+    <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="svgc">
+      ${ticks.map(t=>`<line x1="${L}" x2="${W-R}" y1="${y(t)}" y2="${y(t)}" class="grid${t===0?' zero':''}"/><text x="${L-8}" y="${y(t)+4}" class="ax" text-anchor="end">${compacto(t)}</text>`).join('')}
+      ${serie.map((p,i)=>i%passo===0||(i===serie.length-1&&(serie.length-1)%passo>=passo/2)?`<text x="${x(i)}" y="${H-6}" class="ax" text-anchor="middle">${+p.d.slice(8)}</text>`:'').join('')}
+      ${area?`<path d="${area}" class="area-r"/>`:''}
+      ${real.length>1?`<path d="${path(real)}" class="ln-r"/>`:''}
+      ${prev.length>1?`<path d="${path(prev)}" class="ln-p"/>`:''}
+      ${corte<serie.length&&corte>0?`<line x1="${x(corte-1)}" x2="${x(corte-1)}" y1="${T}" y2="${T+ih}" class="hoje"/><circle cx="${x(corte-1)}" cy="${y(serie[corte-1].v)}" r="4.5" class="dot-r"/>`:''}
+      <circle cx="${x(imin)}" cy="${y(vs[imin])}" r="4.5" class="dot-min ${vs[imin]<0?'neg':''}"/>
+      ${serie.map((p,i)=>`<g class="hov" data-tip="${dataCurta(p.d)}${p.prev?' · previsto':''}: ${money(p.v)}"><rect x="${(x(i)-cw/2).toFixed(1)}" y="${T}" width="${cw.toFixed(1)}" height="${ih}" fill="transparent"/><line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${T+ih}" class="cross"/></g>`).join('')}
+    </svg>
+    <div class="legend"><span><i class="k-ln"></i>Realizado</span>${corte<serie.length?'<span><i class="k-ln tr"></i>Previsto</span>':''}<span class="muted">Menor saldo: <b class="${vs[imin]<0?'neg':''}">${money(vs[imin])}</b> em ${dataCurta(serie[imin].d)}</span></div></div>`;
+}
+function graficoCategorias(ym){
+  const D=despMes(ym).filter(ativa), tot=sum(D,valorLiq);
+  let cats=S.cats.map(c=>({n:c.nome,v:sum(D.filter(d=>d.categoria===c.id),valorLiq)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+  const semCat=sum(D.filter(d=>!catById(d.categoria)),valorLiq); if(semCat>0) cats.push({n:'Sem categoria',v:semCat});
+  if(cats.length>6){ const resto=cats.slice(5); cats=[...cats.slice(0,5),{n:`Outras (${resto.length})`,v:r2(resto.reduce((a,x)=>a+x.v,0))}]; }
+  if(!cats.length) return `<p class="muted small">Sem despesas em ${mesLabel(ym)}.</p>`;
+  const mx=cats[0].v;
+  return `<div class="hbars" role="img" aria-label="Despesas por categoria">${cats.map(c=>`<div class="hb" data-tip="${esc(c.n)}: ${money(c.v)} (${Math.round(c.v/tot*100)}%)"><span class="hb-l">${esc(c.n)}</span><span class="hb-t"><i style="width:${(c.v/mx*100).toFixed(1)}%"></i></span><span class="hb-v num">${money(c.v)}<small>${Math.round(c.v/tot*100)}%</small></span></div>`).join('')}</div>`;
+}
+function graficoRecDesp(ym){
+  const ms=[]; for(let i=5;i>=0;i--) ms.push(addMes(ym,-i));
+  const ds=ms.map(m=>{ const r=resumo(m); return {m,rec:r.recEsp,desp:r.despTot}; });
+  if(!ds.some(d=>d.rec||d.desp)) return `<p class="muted small">Os meses aparecem conforme você lança receitas e despesas.</p>`;
+  const top=tickLimpo(Math.max(...ds.flatMap(d=>[d.rec,d.desp])));
+  return `<div class="cols2" role="img" aria-label="Receitas e despesas dos últimos 6 meses">
+    <div class="cols2-g">${ds.map(d=>`<div class="c2 ${d.m===ym?'atual':''}" data-tip="${esc(mesLabel(d.m))} · receitas ${money(d.rec)} · despesas ${money(d.desp)} · saldo ${money(d.rec-d.desp)}"><div class="c2-b"><i class="r" style="height:${(d.rec/top*100).toFixed(1)}%"></i><i class="d" style="height:${(d.desp/top*100).toFixed(1)}%"></i></div><span class="c2-l">${esc(mesCurto(d.m))}</span><span class="c2-s num ${d.rec-d.desp<0?'neg':''}">${compacto(d.rec-d.desp)}</span></div>`).join('')}</div>
+    <div class="legend"><span><i class="k-sq r"></i>Receitas</span><span><i class="k-sq d"></i>Despesas</span><span class="muted">Abaixo de cada mês: o saldo (receitas − despesas)</span></div></div>`;
+}
+function graficoPlanejado(ym){
+  const lim=orcamentoMes(ym), cs=S.cats.filter(c=>+lim[c.id]>0).map(c=>({c,L:+lim[c.id],g:gastoCat(ym,c.id)})).sort((a,b)=>(b.g/b.L)-(a.g/a.L));
+  if(!cs.length) return `<p class="muted small">Defina o orçamento por categoria em Planejamento para comparar o planejado com o realizado.</p><div class="actions"><button class="btn sm" data-act="ir" data-v="planejamento">Definir orçamento</button></div>`;
+  const tl=sum(cs,x=>x.L), tg=sum(cs,x=>x.g);
+  return `<div class="pr-tot"><span>Planejado <b>${money(tl)}</b></span><span>Realizado <b class="${tg>tl?'neg':''}">${money(tg)}</b></span><span>${tl?Math.round(tg/tl*100):0}% usado</span></div>
+    <div class="plan" role="img" aria-label="Orçamento planejado e realizado por categoria">${cs.slice(0,7).map(x=>{ const pc=x.g/x.L;
+      return `<div class="pl" data-tip="${esc(x.c.nome)}: ${money(x.g)} de ${money(x.L)} (${Math.round(pc*100)}%)"><div class="pl-h"><span>${esc(x.c.nome)}</span><span class="num ${pc>1?'neg':''}">${money(x.g)} <small>de ${money(x.L)}</small></span></div><div class="pl-t"><i class="${pc>1?'over':pc>=.85?'near':''}" style="width:${Math.min(100,pc*100).toFixed(1)}%"></i></div><div class="pl-f small ${pc>1?'neg':'muted'}">${pc>1?`${money(x.g-x.L)} acima do planejado`:`${Math.round(pc*100)}% usado · restam ${money(x.L-x.g)}`}</div></div>`; }).join('')}</div>`;
+}
+
+function vInicio(){
+  const ym=S.mes, rs=resumo(ym), h=hoje(), atual=h.slice(0,7), dp=disponivel(), pe=dp?.pe||proximaEntrada();
+  const fApagar=faturasAPagar(), fAbertas=fApagar.filter(f=>f.fat<=addMes(atual,1)), fVenc=fApagar.filter(f=>f.status==='vencida');
+  const venc=S.desp.filter(d=>ativa(d)&&!d.cartaoId&&sitDesp(d)==='atrasada');
+  const comp=compromissosAte(addMes(atual,1)+'-01');
+  const prox=[...S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).map(d=>({descricao:d.descricao,vencimento:d.vencimento,periodo:d.periodo,valor:valorLiq(d)})),
+    ...fApagar.filter(f=>f.venc>=h).map(f=>({descricao:'Fatura '+f.cartao.nome,vencimento:f.venc,periodo:f.cartao.periodo,valor:f.resta}))].sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
+  const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length, serie=serieSaldoMes(ym);
+  const top=[...rs.D].sort((a,b)=>valorLiq(b)-valorLiq(a)).slice(0,5);
+  return `
+  <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
+  ${blocoConferir()}
+  ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Cadastre suas contas com o saldo de hoje, depois as receitas e as contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novaConta">Cadastrar conta</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
+  ${dp?`<section class="hero2">
+    <div class="h2c"><span class="lbl">Saldo em conta</span><b class="num">${money(dp.saldo)}</b><span class="sub">hoje, em ${contasAtivas().length} ${contasAtivas().length>1?'contas':'conta'}</span></div>
+    <div class="h2c livre ${dp.livre<0?'neg':''}"><span class="lbl">Disponível para gastar</span><b class="num">${money(dp.livre)}</b><span class="sub">${dp.pe?`até a próxima entrada, ${dataCurta(dp.pe.data)}`:'até o fim do mês (sem entrada prevista)'}</span></div>
+    <div class="h2-calc"><span>${money(dp.saldo)} em conta</span><span>− ${money(dp.c.contas)} em ${dp.c.D.length} ${dp.c.D.length===1?'conta':'contas'} a pagar</span>${dp.c.F.length?`<span>− ${money(dp.c.faturas)} em ${dp.c.F.length===1?'fatura':'faturas'}</span>`:''}<span>= <b>${money(dp.livre)}</b> livre${dp.pe?` até ${dataCurta(dp.pe.data)}`:''}</span></div>
+  </section>`:(temContas()&&!S.contasErro?`<section class="contas-faixa vazia"><div><b>Saldo em conta e disponível para gastar</b><span class="small muted">Cadastre suas contas com o saldo de hoje para ver quanto você tem e quanto está realmente livre.</span></div><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Cadastrar conta</button></section>`:'')}
+  <section><div class="section-head"><h2>${ym===atual?'Este mês':mesLabel(ym)}</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
+    <div class="kpis">
+      <div class="kpi"><span class="lbl">Receitas do mês</span><span class="val pos">${money(rs.recReal)}</span><span class="sub">recebido de ${money(rs.recEsp)} previstos</span></div>
+      <div class="kpi"><span class="lbl">Despesas do mês</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} pago · ${money(r2(rs.despTot-rs.despPaga))} a pagar</span></div>
+      <div class="kpi"><span class="lbl">Contas vencidas</span><span class="val ${venc.length||fVenc.length?'neg':''}">${money(r2(sum(venc,valorLiq)+fVenc.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${venc.length+fVenc.length?`${venc.length+fVenc.length} ${venc.length+fVenc.length>1?'itens':'item'} sem pagamento`:'nenhuma'}</span></div>
+      ${temCartoes()&&cartoesAtivos().length?`<div class="kpi"><span class="lbl">Faturas em aberto</span><span class="val">${money(r2(fAbertas.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${fAbertas.length?(f0=>f0.venc<h?`vencida desde ${dataCurta(f0.venc)}`:`próxima vence ${dataCurta(f0.venc)}`)([...fAbertas].sort((a,b)=>a.venc.localeCompare(b.venc))[0]):'nada a pagar'}</span></div>`:''}
+      <div class="kpi"><span class="lbl">Comprometido até ${dataCurta(fimMes(atual))}</span><span class="val">${money(comp.total)}</span><span class="sub">contas e faturas ainda a pagar</span></div>
+      <div class="kpi"><span class="lbl">Próxima entrada</span><span class="val pos">${pe?money(pe.valor):'—'}</span><span class="sub">${pe?`${dataCurta(pe.data)} · ${esc(pe.descricao)}`:'nenhuma receita prevista'}</span></div>
+    </div></section>
+  <div class="grid2">
+    <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas e faturas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
+    <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillP(d.periodo)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>
+  </div>
+  ${serie?`<section class="panel"><h3>Saldo ao longo do mês</h3>${graficoSaldo(serie)}</section>`:''}
+  <div class="grid2">
+    <section class="panel"><h3>Despesas por categoria</h3>${graficoCategorias(ym)}<p class="small muted" style="margin:12px 0 0">Fixas ${money(rs.fixas)} · variáveis ${money(rs.variaveis)} · parcelas ${money(rs.parcelas)}</p></section>
+    <section class="panel"><h3>Maiores despesas do mês</h3>${top.length?`<div class="list">${top.map((d,i)=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${i+1}. ${esc(d.descricao)}</div><div class="meta"><span>${esc(catNome(d.categoria))}</span>${d.cartaoId&&cartaoById(d.cartaoId)?`<span class="pill crt">${esc(cartaoById(d.cartaoId).nome)}</span>`:`<span>${sitDesp(d)==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}`}</div></div><div class="v">${money(valorLiq(d))}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma despesa em ${mesLabel(ym)}.</p>`}</section>
+  </div>
+  <div class="grid2">
+    <section class="panel"><h3>Receitas × despesas</h3>${graficoRecDesp(ym)}</section>
+    <section class="panel"><h3>Planejado × realizado</h3>${graficoPlanejado(ym)}</section>
+  </div>`;
+}
+
 /* ---------- ações ---------- */
 const acoes = {
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
@@ -2389,6 +2493,14 @@ document.addEventListener('click', async e=>{
 });
 $('#modal').addEventListener('mousedown',e=>{ if(e.target.id==='modal') fecharModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#modal').hidden) fecharModal(); });
+/* dica flutuante dos gráficos (mouse e toque) */
+const tipEl=(()=>{ const t=document.createElement('div'); t.className='tip'; t.hidden=true; document.body.appendChild(t); return t; })();
+function mostrarTip(e){ const el=e.target.closest && e.target.closest('[data-tip]'); if(!el){ tipEl.hidden=true; return; }
+  tipEl.textContent=el.dataset.tip; tipEl.hidden=false; const x=e.clientX, y=e.clientY, w=tipEl.offsetWidth;
+  tipEl.style.left=Math.max(8,Math.min(innerWidth-w-8,x-w/2))+'px'; tipEl.style.top=Math.max(8,y-tipEl.offsetHeight-14)+'px'; }
+let tRes=null; window.addEventListener('resize',()=>{ clearTimeout(tRes); tRes=setTimeout(()=>{ if(S.view==='inicio' && S.fase==='pronto') render(); },200); });
+document.addEventListener('pointermove',mostrarTip); document.addEventListener('pointerdown',mostrarTip);
+document.addEventListener('scroll',()=>{ tipEl.hidden=true; },{passive:true});
 document.addEventListener('submit', async e=>{
   const f=e.target; e.preventDefault(); const tipo=f.dataset.form; const btn=f.querySelector('[type=submit]');
   if(['login','cadastro','esqueci','novaSenha'].includes(tipo)){

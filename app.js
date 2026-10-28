@@ -42,7 +42,7 @@ const sb = configurado ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPA
 
 const toSnake = k => k.replace(/[A-Z]/g,m=>'_'+m.toLowerCase());
 const toCamel = k => k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
-const NULOS = new Set(['conta_id','estorno_de','cartao_id','conta_pagamento','data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
+const NULOS = new Set(['entrada_id','conta_id','estorno_de','cartao_id','conta_pagamento','data_compra','vencimento','data_pagamento','data_prevista','data_efetiva','data_saldo','categoria','recorrencia_id','grupo_parcela','parcela_atual','valor_total','valor_recebido','comprovante','comprovante_hash','divida_id','quitada_em','prazo','parcela','dia','valor_alvo']);
 function toDb(o){ const r={}; for(const [k,v] of Object.entries(o)){ if(v===undefined || k==='id') continue; const sk=toSnake(k); r[sk]=(v===''&&NULOS.has(sk))?null:v; } return r; }
 function fromDb(o){ const r={}; for(const [k,v] of Object.entries(o)) r[toCamel(k)]=v; return r; }
 const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'id', orcamentos:'mes', configuracoes:'espaco_id' };
@@ -99,12 +99,6 @@ function saldoDisponivel(){
   for(const d of S.desp) if(d.situacao==='paga' && d.dataPagamento && d.dataPagamento>=c.dataSaldo) s-= +d.valor||0;
   return r2(s);
 }
-function proximoRecebimento(){ const h=hoje(), d=+h.slice(8,10), ym=h.slice(0,7); if(d<10) return ym+'-10'; if(d<20) return ym+'-20'; return addMes(ym,1)+'-10'; }
-function periodo(ym,p){
-  const R=recMes(ym).filter(r=>ativa(r)&&(r.periodo||'')===p), D=despMes(ym).filter(d=>ativa(d)&&(d.periodo||'')===p);
-  const esper=sum(R,recEsperado), comp=sum(D,d=>d.valor), pagos=sum(D.filter(d=>d.situacao==='paga'),d=>d.valor);
-  return {R,D,prev:sum(R,r=>r.valorPrevisto),receb:sum(R.filter(r=>r.situacao==='recebida'),r=>r.valorRecebido),esper,comp,pagos,pend:r2(comp-pagos),saldo:r2(esper-comp)};
-}
 const parcelasFuturas = () => S.desp.filter(d=>(+d.parcelas||1)>1 && ativa(d) && d.situacao!=='paga');
 const orcamentoMes = ym => S.orc[ym]?.limites || {};
 const gastoCat = (ym,catId) => sum(despMes(ym).filter(d=>ativa(d)&&d.categoria===catId),valorLiq);
@@ -121,16 +115,11 @@ function alertas(ym){
   if(atras.length) a.push({k:'danger',t:`${atras.length} ${atras.length>1?'contas vencidas':'conta vencida'} sem pagamento registrado (${money(sum(atras,d=>d.valor))}).`,h:'Se já pagou, marque como paga para manter o saldo correto. Se não, priorize no próximo recebimento.'});
   const breve=S.desp.filter(d=>!d.cartaoId&&['pendente','prevista'].includes(sitDesp(d))&&d.vencimento&&diasEntre(h,d.vencimento)<=3);
   if(breve.length) a.push({k:'warn',t:`${breve.length} ${breve.length>1?'contas vencem':'conta vence'} nos próximos 3 dias: ${breve.slice(0,3).map(d=>esc(d.descricao)).join(', ')}${breve.length>3?'…':''}.`,h:'Confira se o saldo do período cobre esses pagamentos.'});
-  const p10=periodo(ym,'10'), p20=periodo(ym,'20');
-  if(p10.comp>0 && p10.comp>p10.esper) a.push({k:'warn',t:`O período do dia 10 está sobrecarregado em ${money(p10.comp-p10.esper)}.`,h:'Veja no Planejamento quais contas podem ir para o dia 20. Nada é movido sem a sua decisão.'});
-  if((p20.comp>0||p20.esper>0) && p10.saldo+p20.saldo<0) a.push({k:'warn',t:`O período do dia 20 fecha negativo em ${money(Math.abs(p10.saldo+p20.saldo))}.`,h:'Revise gastos variáveis antes de assumir novos compromissos.'});
   const lim=orcamentoMes(ym);
   for(const c of S.cats){ const L=+lim[c.id]; if(!L) continue; const g=gastoCat(ym,c.id);
     if(g>L) a.push({k:'danger',t:`${esc(c.nome)} passou do orçamento: ${money(g)} de ${money(L)}.`,h:'Avalie o que pode ser adiado ou reduzido nesta categoria até o fim do mês.'});
     else if(g>=L*.85) a.push({k:'warn',t:`${esc(c.nome)} já usou ${Math.round(g/L*100)}% do orçamento.`,h:`Restam ${money(L-g)} para o mês.`}); }
-  const sd=saldoDisponivel();
-  if(sd!==null && ym===h.slice(0,7)){ const pr=proximoRecebimento(); const ate=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&d.vencimento&&d.vencimento<pr);
-    const prev=r2(sd-sum(ate,d=>d.valor)); if(prev<0) a.push({k:'danger',t:`O saldo previsto até ${dataCurta(pr)} fica negativo (${money(prev)}).`,h:'As contas que vencem antes do próximo recebimento superam o saldo em conta.'}); }
+  a.push(...alertasCiclos());
   a.push(...alertasCartoes());
   a.push(...alertasMetas(ym));
   const rm=recorrentesFaltando(ym);
@@ -193,7 +182,7 @@ async function abrirEspaco(id){
   for(const t of tabs) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>recarregarDepois(t));
   for(const t of ['compras','precos']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcp); S._tcp=setTimeout(carregarComprasPrecos,500); });
   for(const t of ['dividas','metas']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tmt); S._tmt=setTimeout(carregarMetas,400); });
-  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas(); S.contas=undefined; S.transf=[]; S.contasErro=false; carregarContas(); S.cartoes=undefined; S.pagFat=[]; S.cartoesErro=false; carregarCartoes();
+  S.planos={}; S.listas={}; carregarComprasPrecos(); S.dividas=undefined; S.metas=[]; carregarMetas(); S.contas=undefined; S.transf=[]; S.contasErro=false; carregarContas(); S.cartoes=undefined; S.pagFat=[]; S.cartoesErro=false; carregarCartoes(); S.ciclosOk=undefined; carregarCiclos();
   for(const t of ['cartoes','pagamentos_fatura']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tcc); S._tcc=setTimeout(carregarCartoes,400); });
   for(const t of ['contas','transferencias']) S.canal.on('postgres_changes',{event:'*',schema:'public',table:t,filter:'espaco_id=eq.'+id},()=>{ clearTimeout(S._tct); S._tct=setTimeout(carregarContas,400); });
   S.canal.subscribe();
@@ -210,7 +199,7 @@ async function entrar(session){
     await abrirEspaco(alvo.id);
   }catch(e){ dbErr(e); S.fase='erro'; render(); }
 }
-function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,contas:undefined,transf:[],contasErro:false,cartoes:undefined,pagFat:[],cartoesErro:false,cartaoSel:null,faturaSel:null,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
+function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Object.assign(S,{rec:[],desp:[],cats:[],recor:[],orc:{},cfg:{},espacos:[],esp:null,user:null,perfil:null,perfilAl:undefined,perfilAlErro:false,pesagens:[],quiz:null,planos:undefined,listas:{},compras:[],precos:[],cupom:null,dividas:undefined,metas:[],metasErro:false,contas:undefined,transf:[],contasErro:false,cartoes:undefined,pagFat:[],cartoesErro:false,cartaoSel:null,faturaSel:null,ciclosOk:undefined,mtTab:'dividas',membros:null,fase:'auth',auth:'login'}); render(); }
 
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
@@ -310,25 +299,25 @@ function rowDesp(d,o={}){
   if(pix && !noCartao && s!=='paga' && s!=='cancelada') ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Copiar Pix</button>`);
   if(!noCartao&&s!=='paga'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`);
   if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
-  if(o.mover){ if(d.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="10">Dia 10</button>`); if(d.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodo" data-id="${d.id}" data-p="20">Dia 20</button>`); if(d.periodo) ops.push(`<button class="btn sm ghost" data-act="periodo" data-id="${d.id}" data-p="">Tirar do período</button>`); }
+  if(o.mover && ciclosOk() && entradasCfg().length) ops.push(`<label class="sel-ent"><span class="small muted">Pagar com</span><select data-chg="entradaD" data-id="${d.id}" aria-label="Pagar com qual entrada">${optsEntradaPagar(d.entradaId).replace('Automático (pela data de vencimento)','Automático')}</select></label>`);
   if((s==='paga'||noCartao) && !o.mover && temContas() && valorLiq(d)>0) ops.push(`<button class="btn sm ghost" data-act="estornar" data-id="${d.id}" title="Registrar estorno">Estorno</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
   const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
   const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
-  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span>${noCartao?`${d.dataCompra?`<span>compra ${dataCurta(d.dataCompra)}</span>`:''}<span class="pill crt">${esc(cartaoById(d.cartaoId).nome)} · fatura ${esc(mesCurto(compDesp(d)))}</span>${s==='paga'?pillD(d):''}`:`<span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}`}${parc}${restante}${o.mover?'':pillP(d.periodo)}${d.formaPagamento&&!noCartao?`<span>${esc(d.formaPagamento)}</span>`:''}${!noCartao&&contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span>${noCartao?`${d.dataCompra?`<span>compra ${dataCurta(d.dataCompra)}</span>`:''}<span class="pill crt">${esc(cartaoById(d.cartaoId).nome)} · fatura ${esc(mesCurto(compDesp(d)))}</span>${s==='paga'?pillD(d):''}`:`<span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}`}${parc}${restante}${o.mover?'':pillE(d.entradaId)}${d.formaPagamento&&!noCartao?`<span>${esc(d.formaPagamento)}</span>`:''}${!noCartao&&contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowRec(r,o={}){
   const s=sitRec(r); const ops=[];
   if(r.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="receitas" data-id="${r.id}">${icon(I.check)}Conferido</button>`);
   if(s!=='recebida'&&s!=='cancelada') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
   if(r.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(r.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
-  if(o.mover){ if(r.periodo!=='10') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="10">Dia 10</button>`); if(r.periodo!=='20') ops.push(`<button class="btn sm" data-act="periodoR" data-id="${r.id}" data-p="20">Dia 20</button>`); }
+  if(o.mover && ciclosOk() && entradasCfg().length) ops.push(`<label class="sel-ent"><span class="small muted">É a</span><select data-chg="entradaR" data-id="${r.id}" aria-label="Qual entrada">${opts([['','Entrada eventual'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])],r.entradaId||'')}</select></label>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   const val = s==='recebida' ? `${money(r.valorRecebido)}${r2(r.valorRecebido)!==r2(r.valorPrevisto)?`<div class="small muted">previsto ${money(r.valorPrevisto)}</div>`:''}` : money(r.valorPrevisto);
-  return `<div class="row"><div><div class="t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(r.origem||'')}</span>${r.recorrenciaId?'<span class="pill">Todo mês</span>':''}<span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillP(r.periodo)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
+  return `<div class="row"><div><div class="t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(r.origem||'')}</span>${r.recorrenciaId?'<span class="pill">Todo mês</span>':''}<span>${s==='recebida'?'recebido '+dataCurta(r.dataEfetiva):'previsto '+dataCurta(r.dataPrevista)}</span>${pillR(r)}${o.mover?'':pillE(r.entradaId)}</div></div><div class="v pos">${val}</div><div class="ops">${ops.join('')}</div></div>`;
 }
 const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
 
@@ -357,24 +346,8 @@ function vFinanceiro(){
   </section>`;
 }
 
-function blocoPeriodo(ym,p,carry){
-  const P=periodo(ym,p), final=r2(P.saldo+(carry||0));
-  return `<article class="period">
-    <header><span class="day num">${p}</span><div><h3>Recebimento do dia ${p}</h3><span class="small muted">${p==='10'?'primeira metade do mês':'segunda metade do mês'}</span></div></header>
-    <div class="figs"><div>Previsto para receber<b>${money(P.prev)}</b></div><div>Efetivamente recebido<b class="pos">${money(P.receb)}</b></div><div>Compromissos<b>${money(P.comp)}</b></div><div>Pagos · pendentes<b>${money(P.pagos)} · ${money(P.pend)}</b></div>
-      ${carry!==undefined?`<div style="grid-column:1/-1">Sobra do período do dia 10<b class="${carry<0?'neg':''}">${money(carry)}</b></div>`:''}</div>
-    <div class="body">
-      ${P.R.length?`<div class="small muted" style="padding:8px 4px 0">Receitas</div><div class="list">${P.R.map(r=>rowRec(r,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Nenhuma receita atribuída a este período.</p>`}
-      ${P.D.length?`<div class="small muted" style="padding:8px 4px 0">Compromissos</div><div class="list">${P.D.map(d=>rowDesp(d,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:0 4px 8px">Nenhuma conta atribuída a este período.</p>`}
-    </div>
-    <footer><span class="small muted">Saldo previsto após os pagamentos</span><span class="big ${final<0?'neg':'pos'}">${money(final)}</span></footer></article>`;
-}
 function vPlanejamento(){
-  const ym=S.mes, p10=periodo(ym,'10');
-  const semD=despMes(ym).filter(d=>ativa(d)&&!d.periodo).sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
-  const semR=recMes(ym).filter(r=>ativa(r)&&!r.periodo), rs=resumo(ym), rm=recorrentesFaltando(ym);
-  const sobre=p10.comp>p10.esper&&p10.comp>0;
-  const cand=sobre?p10.D.filter(d=>d.situacao!=='paga'&&(d.comportamento!=='fixa'||+(d.vencimento||'').slice(8,10)>=20)):[];
+  const ym=S.mes, rs=resumo(ym), rm=recorrentesFaltando(ym);
   const futuros=S.desp.filter(d=>ativa(d)&&d.situacao!=='paga'&&compDesp(d)>ym);
   const lim=orcamentoMes(ym), temOrc=Object.keys(lim).length>0, temAnt=Object.keys(orcamentoMes(addMes(ym,-1))).length>0;
   return `
@@ -395,14 +368,7 @@ function vPlanejamento(){
       <p class="small muted" style="margin-top:8px">O valor é salvo ao sair do campo. O gasto considera todas as despesas não canceladas do mês, pagas ou pendentes.</p>`
       :`<div class="empty"><strong>Nenhuma categoria cadastrada</strong>Crie suas categorias em Configurações para montar o orçamento.</div>`}
   </section>
-  ${sobre?`<div class="alert warn"><span class="dot"></span><div><p>Os compromissos do dia 10 (${money(p10.comp)}) passam da receita prevista do período (${money(p10.esper)}) em ${money(p10.comp-p10.esper)}.</p><p class="hint">${cand.length?`Contas que podem ir para o dia 20 por serem variáveis ou vencerem depois do dia 20: ${cand.map(d=>esc(d.descricao)+' ('+money(d.valor)+')').join(', ')}. Use os botões em cada conta para decidir.`:'Revise os gastos variáveis do período. Nenhuma conta foi movida automaticamente.'}</p></div></div>`:''}
-  <section><div class="section-head"><h2>Recebimentos dos dias 10 e 20</h2><p>Atribua cada compromisso ao recebimento que vai pagá-lo.</p></div>
-    <div class="periods">${blocoPeriodo(ym,'10')}${blocoPeriodo(ym,'20',p10.saldo)}
-      <article class="period unassigned"><header><span class="day">·</span><div><h3>Sem período definido</h3><span class="small muted">aguardando a sua decisão</span></div></header>
-        <div class="figs"><div>Compromissos<b>${money(sum(semD,d=>d.valor))}</b></div><div>Receitas<b>${money(sum(semR,recEsperado))}</b></div></div>
-        <div class="body">${semR.length?`<div class="list">${semR.map(r=>rowRec(r,{mover:true})).join('')}</div>`:''}${semD.length?`<div class="list">${semD.map(d=>rowDesp(d,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Todas as contas do mês já têm período.</p>`}</div></article>
-    </div></section>
-`;
+  ${vCiclosPlanejamento(ym)}`;
 }
 
 function vRelatorios(){
@@ -449,11 +415,12 @@ function vConfig(){
       <div class="field"><label for="sVal">Saldo em conta (R$)</label><input id="sVal" name="valor" inputmode="decimal" required value="${fmtInput(c.saldoInicial)}" placeholder="0,00"></div>
       <div class="field"><label for="sData">No início do dia</label><input id="sData" name="data" type="date" required value="${c.dataSaldo||hoje()}"></div>
       <div class="full actions"><button class="btn primary" type="submit">Salvar saldo</button></div></form></section>`}
+  ${painelEntradas()}
   <section class="panel"><div class="section-head"><h3 style="margin:0">Categorias de despesa</h3><div class="right"><button class="btn sm primary" data-act="novaCat">${icon(I.plus)}Nova categoria</button></div></div>
     ${S.cats.length?`<div class="list">${S.cats.map(k=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(k.nome)}</div><div class="meta">${k.alimentacao?'<span class="pill paga">Conta como alimentação</span>':''}<span>${S.desp.filter(d=>d.categoria===k.id).length} lançamentos</span></div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editCat" data-id="${k.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delCat" data-id="${k.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<div class="empty"><strong>Nenhuma categoria</strong>Crie categorias como Moradia, Transporte e Supermercado.</div>`}</section>
   <section class="panel"><h3>Receitas e contas fixas</h3>
     <p class="small muted" style="margin:0 0 10px">Entram sozinhas em todos os meses, sempre 12 meses à frente. Alterações valem para os meses ainda não pagos ou recebidos.</p>
-    ${S.recor.length?`<div class="list">${[...S.recor].sort((a,b)=>(ehRecR(b)-ehRecR(a))||a.descricao.localeCompare(b.descricao,'pt')).map(t=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(t.descricao)}</div><div class="meta">${ehRecR(t)?'<span class="pill paga">Receita</span>':'<span class="pill">Despesa</span>'}<span>${ehRecR(t)?esc(t.origem||'Receita'):esc(catNome(t.categoria))}</span><span>todo dia ${t.dia}</span>${pillP(t.periodo)}${t.ativo===false?'<span class="pill cancelada">Pausada</span>':''}</div></div><div class="v ${ehRecR(t)?'pos':''}">${money(t.valor)}</div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editRecor" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delRecor" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<p class="small muted">Nenhuma conta recorrente. Marque “Repete todo mês” ao cadastrar uma despesa fixa.</p>`}</section>
+    ${S.recor.length?`<div class="list">${[...S.recor].sort((a,b)=>(ehRecR(b)-ehRecR(a))||a.descricao.localeCompare(b.descricao,'pt')).map(t=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">${esc(t.descricao)}</div><div class="meta">${ehRecR(t)?'<span class="pill paga">Receita</span>':'<span class="pill">Despesa</span>'}<span>${ehRecR(t)?esc(t.origem||'Receita'):esc(catNome(t.categoria))}</span><span>todo dia ${t.dia}</span>${pillE(t.entradaId)}${t.ativo===false?'<span class="pill cancelada">Pausada</span>':''}</div></div><div class="v ${ehRecR(t)?'pos':''}">${money(t.valor)}</div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editRecor" data-id="${t.id}" aria-label="Editar">${icon(I.edit)}</button><button class="btn sm ghost" data-act="delRecor" data-id="${t.id}" aria-label="Excluir">${icon(I.trash)}</button></div></div>`).join('')}</div>`:`<p class="small muted">Nenhuma conta recorrente. Marque “Repete todo mês” ao cadastrar uma despesa fixa.</p>`}</section>
   <section class="panel"><h3>Seus dados</h3>
     <p class="small muted" style="margin:0 0 14px">Espaço “${esc(e?.nome||'')}”: ${S.rec.length} receitas, ${S.desp.length} despesas, ${S.cats.length} categorias.</p>
     <div class="actions"><button class="btn" data-act="exportar">${icon(I.down)}Exportar dados do espaço (JSON)</button>${dono?`<button class="btn danger" data-act="apagarTudo">Excluir todos os dados do espaço</button>`:''}<button class="btn danger" data-act="excluirConta">Excluir minha conta</button></div></section>`;
@@ -590,7 +557,7 @@ function formDespesa(d){
       <div class="field"><label for="dVenc" id="dVencLbl">${grupo?'Vencimento desta parcela':'Vencimento'}</label><input id="dVenc" name="vencimento" type="date" required value="${d.vencimento||''}"></div>
       <div class="field"><label for="dSit">Situação</label><select id="dSit" name="situacao">${opts([['pendente','Pendente'],['paga','Pago'],['prevista','Programado'],['cancelada','Cancelado']],d.situacao)}</select></div>
       <div class="field" data-show="paga"><label for="dPag">Pago em</label><input id="dPag" name="dataPagamento" type="date" value="${d.dataPagamento||hoje()}"></div>
-      <div class="field"><label for="dPer">Pagar com o recebimento</label><select id="dPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
+      ${campoEntradaPagar(d.entradaId,'dPer')}
       <div class="field"><label for="dComp">Tipo de despesa</label><select id="dComp" name="comportamento">${opts([['variavel','Variável'],['fixa','Fixa']],d.comportamento)}</select></div>
       <div class="field"><label for="dCompra">Data da compra</label><input id="dCompra" name="dataCompra" type="date" value="${d.dataCompra||''}"></div>
       <div class="field"><label for="dForma">Forma de pagamento</label><select id="dForma" name="formaPagamento"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento)}</select></div>
@@ -598,6 +565,7 @@ function formDespesa(d){
       ${campoConta(d.contaId,'Sai da conta')}
       ${comCartao?`<p class="note full" id="cartPrev" data-cartao style="margin:0"></p>`:''}
     </div></div>
+  ${!novo&&d.recorrenciaId&&S.recor.some(t=>t.id===d.recorrenciaId)?`<div class="grupo"><span class="grupo-t">Conta fixa (todo mês)</span><div class="field"><label>As alterações valem para</label>${segEscopo()}</div></div>`:''}
   ${blocoPix(d)}
   <div class="field"><label for="dObs">Observações</label><textarea id="dObs" name="obs" rows="2" maxlength="500">${esc(d.obs)}</textarea></div>
   ${rodape(novo?'Salvar despesa':'Salvar alterações')}</form>`;
@@ -634,9 +602,9 @@ function wireDespesa(root){
   f.addEventListener('input',sync); f.addEventListener('change',sync); sync();
 }
 function camposDespesa(fd){
-  return {descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,periodo:fd.periodo||'',dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim(),
+  return {descricao:fd.descricao.trim(),categoria:fd.categoria,subcategoria:(fd.subcategoria||'').trim(),formaPagamento:fd.formaPagamento||'',comportamento:fd.comportamento,...(fd.entradaId!==undefined?{entradaId:fd.entradaId||null}:{}),dataCompra:fd.dataCompra||'',situacao:fd.situacao,dataPagamento:fd.situacao==='paga'?(fd.dataPagamento||hoje()):'',obs:(fd.obs||'').trim(),
     chavePix:fd.formaPagamento==='Pix'?(fd.chavePix||'').trim():'', pixCopiaCola:fd.formaPagamento==='Pix'?(fd.pixCopiaCola||'').trim():'', ...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),
-    ...(fd.cartaoId!==undefined?(()=>{ const k=fd.formaPagamento==='Crédito'?fd.cartaoId:'', c=k?cartaoById(k):null; return c?{cartaoId:k,contaId:'',periodo:c.periodo||fd.periodo||''}:{cartaoId:''}; })():{})};
+    ...(fd.cartaoId!==undefined?(()=>{ const k=fd.formaPagamento==='Crédito'?fd.cartaoId:'', c=k?cartaoById(k):null; return c?{cartaoId:k,contaId:'',...comEntrada(c.entradaId||fd.entradaId)}:{cartaoId:''}; })():{})};
 }
 async function salvarDespesa(f){
   const fd=Object.fromEntries(new FormData(f)), id=f.dataset.id, valor=parseValor(fd.valor);
@@ -646,7 +614,7 @@ async function salvarDespesa(f){
   if(fd.formaPagamento==='Crédito' && fd.cartaoId && !fd.dataCompra) return 'Informe a data da compra no cartão.';
   if(!fd.vencimento) return 'Informe a data de vencimento.';
   const base=camposDespesa(fd), agora=new Date().toISOString();
-  if(id) return editarDespesa(f,fd,base,valor);
+  if(id){ const r=await editarDespesa(f,fd,base,valor); if(typeof r==='string') return r; await propagarDespesa(fd,base,valor,id); return r; }
   const modo=fd.modo||'unica';
   if(modo==='parcelada'){
     const A=parseInt(fd.parcelaAtual)||1, N=parseInt(fd.totalParcelas)||0;
@@ -663,10 +631,17 @@ async function salvarDespesa(f){
   }
   const arq=await enviarArquivo();
   let recorrenciaId='';
-  if(modo==='mensal'){ recorrenciaId=await inserirRecorrencia({descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),geradoAte:fd.vencimento.slice(0,7),ativo:true,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}); base.comportamento='fixa'; }
+  if(modo==='mensal'){ recorrenciaId=await inserirRecorrencia({descricao:base.descricao,valor:r2(valor),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,...comEntrada(base.entradaId),dia:+fd.vencimento.slice(8,10),inicio:fd.vencimento.slice(0,7),geradoAte:fd.vencimento.slice(0,7),ativo:true,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}); base.comportamento='fixa'; }
   await inserir('despesas',{...base,valor:r2(valor),vencimento:fd.vencimento,parcelas:1,recorrenciaId,...(arq||{})});
   if(modo==='mensal') await garantirRecorrentes();
   toast(modo==='mensal'?'Conta fixa salva e lançada em todos os meses a partir deste.':'Despesa salva.');
+}
+/* conta fixa: "Este e os próximos" altera o modelo e os meses seguintes ainda não pagos */
+async function propagarDespesa(fd,base,valor,id){
+  const d=S.desp.find(x=>x.id===id), t=d?.recorrenciaId?S.recor.find(x=>x.id===d.recorrenciaId):null;
+  if(!t || fd.escopo!=='proximos') return;
+  const novo={descricao:base.descricao,valor:r2(valor),dia:+fd.vencimento.slice(8,10),categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola,...(base.entradaId!==undefined?comEntrada(base.entradaId):{})};
+  await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo({...t,...novo},novo,fd.vencimento.slice(0,7)); toast('Conta fixa alterada neste e nos próximos meses.');
 }
 async function editarDespesa(f,fd,base,valor){
   const id=f.dataset.id, d=S.desp.find(x=>x.id===id); if(!d) return 'Este lançamento não existe mais. Feche e atualize a página.';
@@ -688,7 +663,7 @@ async function editarDespesa(f,fd,base,valor){
     let n=A; for(const x of antes){ n--; ups.push({id:x.id,dados:{parcelaAtual:Math.max(1,n),parcelas:N}}); }
     n=A; let ultimo=fd.vencimento;
     for(const x of depois){ n++;
-      if(n<=N){ ups.push({id:x.id,dados:{parcelaAtual:n,parcelas:N,...(x.situacao!=='paga'?{valor:r2(valor),descricao:base.descricao,categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,periodo:base.periodo,chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}:{})}}); ultimo=x.vencimento; }
+      if(n<=N){ ups.push({id:x.id,dados:{parcelaAtual:n,parcelas:N,...(x.situacao!=='paga'?{valor:r2(valor),descricao:base.descricao,categoria:base.categoria,subcategoria:base.subcategoria,formaPagamento:base.formaPagamento,...comEntrada(base.entradaId),chavePix:base.chavePix,pixCopiaCola:base.pixCopiaCola}:{})}}); ultimo=x.vencimento; }
       else if(x.situacao!=='paga') apagar.push(x);
       else ups.push({id:x.id,dados:{parcelaAtual:n,parcelas:Math.max(N,n)}});
     }
@@ -713,10 +688,10 @@ function formReceita(r){
     <div class="form-grid">
       <div class="field full"><label for="rDesc">Descrição</label><input id="rDesc" name="descricao" required maxlength="120" value="${esc(r.descricao)}" placeholder="Ex.: Salário, Comissão de setembro"></div>
       <div class="field"><label for="rOri">Origem</label><select id="rOri" name="origem">${opts(ORIGENS.map(x=>[x,x]),r.origem)}</select></div>
-      <div class="field"><label for="rPer">Período de recebimento</label><select id="rPer" name="periodo">${opts([['auto','Pela data prevista'],['10','Dia 10'],['20','Dia 20'],['','Sem período']],novo?'auto':(r.periodo||''))}</select></div>
-      <div class="field full"><label>Tipo de receita</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!r.recorrenciaId}" data-act="modoValor" data-v="variavel">Variável</button><button type="button" aria-pressed="${!!r.recorrenciaId}" data-act="modoValor" data-v="fixa">Fixa (todo mês)</button></div><input type="hidden" name="modoValor" value="${r.recorrenciaId?'fixa':'variavel'}"></div>
+      ${ciclosOk()&&entradasCfg().length?`<div class="field"><label for="rPer">Esta receita é</label><select id="rPer" name="entradaId">${opts([...(novo?[['auto','Identificar pela data']]:[]),['','Entrada eventual (extra)'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])],novo?'auto':(r.entradaId||''))}</select></div>`:''}
+      <div class="field full"><label>Tipo de receita</label><div class="seg" id="segValor"><button type="button" aria-pressed="${!r.recorrenciaId}" data-act="modoValor" data-v="variavel">Única</button><button type="button" aria-pressed="${!!r.recorrenciaId}" data-act="modoValor" data-v="fixa">Recorrente (todo mês)</button></div><input type="hidden" name="modoValor" value="${r.recorrenciaId?'fixa':'variavel'}"></div>
       <p class="note full" data-show="fixa" style="margin:0">${r.recorrenciaId?'Receita fixa: entra em todos os meses com o mesmo valor e dia.':'Entra automaticamente em todos os meses a partir da data prevista, com o mesmo valor e dia. Os próximos 12 meses ficam sempre lançados.'}</p>
-      ${r.recorrenciaId?`<label class="check full" data-show="fixa"><input type="checkbox" name="propagar" checked> Aplicar descrição, valor, dia e período também aos próximos meses</label><p class="note full" data-show="variavel" style="margin:0">Ao mudar para variável, a receita deixa de repetir: os meses futuros ainda não recebidos saem de Lançamentos.</p>`:''}
+      ${r.recorrenciaId?`<div class="field full" data-show="fixa"><label>As alterações valem para</label>${segEscopo()}</div><p class="note full" data-show="variavel" style="margin:0">Ao mudar para única, a receita deixa de repetir: os meses futuros ainda não recebidos saem de Lançamentos.</p>`:''}
     </div></div>
   <div class="grupo"><span class="grupo-t">Previsto</span>
     <div class="form-grid">
@@ -740,16 +715,20 @@ async function salvarReceita(f){
   if(!(vp>=0)) return 'Informe o valor previsto, por exemplo 3200,00.';
   if(!fd.dataPrevista) return 'Informe a data prevista.';
   let vr=null; if(fd.situacao==='recebida'){ vr=parseValor(fd.valorRecebido); if(isNaN(vr)) vr=vp; if(vr<0) return 'O valor recebido não pode ser negativo.'; }
-  const periodo = fd.periodo==='auto' ? (+fd.dataPrevista.slice(8,10)<=15?'10':'20') : fd.periodo;
+  const ym=fd.dataPrevista.slice(0,7);
+  const entradaSel = fd.entradaId==='auto' ? (entradasCfg().find(e=>dataRegra(e,ym)===fd.dataPrevista)?.id||'') : (fd.entradaId||'');
   const arq=await enviarArquivo();
-  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,periodo,situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
-  const fixa=fd.modoValor==='fixa', ym=fd.dataPrevista.slice(0,7);
-  const modelo=()=>({tipo:'receita',descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),periodo,inicio:ym,geradoAte:ym,ativo:true});
+  const dados={descricao:fd.descricao.trim(),origem:fd.origem,valorPrevisto:r2(vp),dataPrevista:fd.dataPrevista,...(fd.entradaId!==undefined?{entradaId:entradaSel||null}:{}),situacao:fd.situacao,valorRecebido:vr===null?null:r2(vr),...(fd.contaId!==undefined?{contaId:fd.contaId}:{}),dataEfetiva:fd.situacao==='recebida'?(fd.dataEfetiva||hoje()):'',obs:(fd.obs||'').trim(),...(arq||{})};
+  const fixa=fd.modoValor==='fixa';
+  const modelo=()=>({tipo:'receita',descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),...comEntrada(entradaSel),inicio:ym,geradoAte:ym,ativo:true});
   if(id){ const old=S.rec.find(x=>x.id===id), t=old?.recorrenciaId?S.recor.find(x=>x.id===old.recorrenciaId):null;
     let recorrenciaId=old?.recorrenciaId||null, msg='Receita atualizada.';
     if(fixa && !t){ recorrenciaId=await inserirRecorrencia(modelo()); msg='Receita agora é fixa e foi lançada nos próximos meses.'; }
     await atualizar('receitas',id,{...dados,...(recorrenciaId?{recorrenciaId}:{}),conferido:true,atualizadoEm:new Date().toISOString()}); if(arq&&old?.comprovante) apagarArquivos([old.comprovante]);
-    if(t && fixa && fd.propagar){ const novo={descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),periodo}; await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo,ym); msg='Receita atualizada neste e nos próximos meses.'; }
+    if(t && fixa && fd.escopo==='proximos'){ const novo={descricao:dados.descricao,origem:dados.origem,valor:r2(vp),dia:+fd.dataPrevista.slice(8,10),...comEntrada(entradaSel)};
+      const e=entradaById(entradaSel); if(e && dataRegra(e,ym)!==fd.dataPrevista){ const ne={...e,regra:'dia',dia:+fd.dataPrevista.slice(8,10)}; await salvarEntradas(entradasTodas().map(x=>x.id===e.id?ne:x)); await reaplicarEntrada(ne,ym); }
+      await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo({...t,...novo},novo,ym); msg='Receita atualizada neste e nos próximos meses.'; }
+    else if(t && fixa) msg='Receita alterada só neste mês.';
     if(t && !fixa){ await aplicarModeloFuturo(t,{ativo:false},ym); await atualizar('recorrencias',t.id,{ativo:false}); msg='Receita deixou de repetir. Os meses futuros não recebidos foram retirados.'; }
     await garantirRecorrentes(); toast(msg); }
   else if(fixa){ const recorrenciaId=await inserirRecorrencia(modelo()); await inserir('receitas',{...dados,recorrenciaId}); await garantirRecorrentes(); toast('Receita fixa salva e lançada em todos os meses a partir deste.'); }
@@ -951,7 +930,7 @@ function rowDivida(dv){
   ops.push(`<button class="btn sm ghost" data-act="editDivida" data-id="${dv.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   ops.push(`<button class="btn sm ghost" data-act="delDivida" data-id="${dv.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
   return `<div class="row"><div><div class="t">${esc(dv.nome)}${naoCobre?' <span class="pill atrasada">Pagamento não cobre os juros</span>':''}</div>
-    <div class="meta"><span>${esc(TIPOS_DIV_CURTO[dv.tipo]||'Dívida')}${dv.credor?' · '+esc(dv.credor):''}</span><span>${j?String(j).replace('.',',')+'% a.m. ≈ '+money(jm)+' de juros/mês':'sem juros'}</span>${parc?`<span>paga ${money(parc)}${dv.dia?' todo dia '+dv.dia:''}</span>`:'<span>sem pagamento mensal definido</span>'}${pillP(dv.periodo)}<span>saldo informado ${money(dv.saldo)} em ${dataCurta(dv.dataSaldo)}${pagos.length?` · ${pagos.length} ${pagos.length>1?'pagamentos':'pagamento'} depois`:''}</span></div></div>
+    <div class="meta"><span>${esc(TIPOS_DIV_CURTO[dv.tipo]||'Dívida')}${dv.credor?' · '+esc(dv.credor):''}</span><span>${j?String(j).replace('.',',')+'% a.m. ≈ '+money(jm)+' de juros/mês':'sem juros'}</span>${parc?`<span>paga ${money(parc)}${dv.dia?' todo dia '+dv.dia:''}</span>`:'<span>sem pagamento mensal definido</span>'}${pillE(dv.entradaId)}<span>saldo informado ${money(dv.saldo)} em ${dataCurta(dv.dataSaldo)}${pagos.length?` · ${pagos.length} ${pagos.length>1?'pagamentos':'pagamento'} depois`:''}</span></div></div>
     <div class="v">${money(s)}<div class="small muted">saldo hoje</div></div><div class="ops">${ops.join('')}</div></div>`;
 }
 function rowParcelamento(p){
@@ -1006,7 +985,7 @@ function formDivida(d){
     <div class="field"><label for="dvJ">Juros ao mês (%)</label><input id="dvJ" name="juros" inputmode="decimal" value="${d.jurosMes?String(d.jurosMes).replace('.',','):''}" placeholder="0"></div>
     <div class="field"><label for="dvP">Pagamento mensal (R$)</label><input id="dvP" name="parcela" inputmode="decimal" value="${fmtInput(d.parcela)}" placeholder="parcela ou mínimo"></div>
     <div class="field"><label for="dvDia">Dia do vencimento</label><input id="dvDia" name="dia" type="number" min="1" max="31" value="${d.dia||''}"></div>
-    <div class="field"><label for="dvPer">Pagar com o recebimento</label><select id="dvPer" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],d.periodo||'')}</select></div>
+    ${campoEntradaPagar(d.entradaId,'dvPer')}
     <div class="field"><label for="dvF">Forma de pagamento</label><select id="dvF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),d.formaPagamento||'Pix')}</select></div>
     <div class="field"><label for="dvK">Chave Pix (opcional)</label><input id="dvK" name="chave" maxlength="140" autocomplete="off" value="${esc(d.chavePix)}"></div>
     <div class="field full"><label for="dvO">Observação</label><input id="dvO" name="obs" maxlength="200" value="${esc(d.obs)}"></div></div>
@@ -1019,7 +998,7 @@ function lerDivida(f){
   if(isNaN(juros)||juros<0||juros>30) return 'Informe os juros ao mês entre 0 e 30%.';
   if(parcela!==null&&(isNaN(parcela)||parcela<=0)) return 'Informe o pagamento mensal ou deixe em branco.';
   if(dia!==null&&!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
-  return {nome:g('nome'),tipo:g('tipo'),credor:g('credor'),saldo:r2(saldo),dataSaldo:g('dataSaldo'),jurosMes:r2(juros*1000)/1000,parcela:parcela===null?null:r2(parcela),dia,periodo:g('periodo'),formaPagamento:g('forma'),chavePix:g('chave'),obs:g('obs')};
+  return {nome:g('nome'),tipo:g('tipo'),credor:g('credor'),saldo:r2(saldo),dataSaldo:g('dataSaldo'),jurosMes:r2(juros*1000)/1000,parcela:parcela===null?null:r2(parcela),dia,...(f.elements.entradaId?{entradaId:f.elements.entradaId.value||null}:{}),formaPagamento:g('forma'),chavePix:g('chave'),obs:g('obs')};
 }
 const catDividas = () => catPorNome('Dívidas e parcelas') || S.cats[0]?.id || '';
 function vencDivida(dv, ym){ return ym+'-'+String(Math.min(+dv.dia||10,diasNoMes(ym))).padStart(2,'0'); }
@@ -1046,7 +1025,7 @@ const acoesMetas = {
       <p class="note">${pend?'O lançamento pendente de Lançamentos será marcado como pago.':'Vira uma despesa paga em “Dívidas e parcelas” em Lançamentos, ligada a esta dívida.'}</p>${rodape('Registrar pagamento')}</form>`,
     async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value, forma=f.elements.forma.value; if(!(v>0)) return 'Informe o valor pago.';
       if(pend) await atualizar('despesas',pend.id,{situacao:'paga',valor:r2(v),dataPagamento:d,formaPagamento:forma});
-      else await inserir('despesas',{descricao:'Pagamento · '+dv.nome,valor:r2(v),categoria:catDividas(),comportamento:'fixa',formaPagamento:forma,vencimento:d,dataPagamento:d,situacao:'paga',periodo:dv.periodo||'',parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''});
+      else await inserir('despesas',{descricao:'Pagamento · '+dv.nome,valor:r2(v),categoria:catDividas(),comportamento:'fixa',formaPagamento:forma,vencimento:d,dataPagamento:d,situacao:'paga',...comEntrada(dv.entradaId),parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''});
       const resta=saldoDiv(dv);
       if(resta<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:d}); toast('Pagamento registrado. Dívida quitada!'); } else toast(`Pagamento registrado. Saldo estimado: ${money(resta)}.`); }); },
   delDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return; const n=S.desp.filter(x=>x.dividaId===dv.id).length;
@@ -1055,7 +1034,7 @@ const acoesMetas = {
   copiarPixDiv: async el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv?.chavePix) return;
     try{ await navigator.clipboard.writeText(dv.chavePix); toast('Chave Pix copiada. Cole no app do banco.'); }catch(_){ abrirModal(`<div>${head('Chave Pix')}</div><p class="code" style="word-break:break-all;margin:0">${esc(dv.chavePix)}</p>`,null); } },
   lancarPagDiv: async el => { el.disabled=true; const ym=S.mes, falt=pagamentosFaltando(ym);
-    try{ await inserir('despesas',falt.map(dv=>({descricao:'Pagamento · '+dv.nome,valor:r2(dv.parcela),categoria:catDividas(),comportamento:'fixa',formaPagamento:dv.formaPagamento||'',vencimento:vencDivida(dv,ym),situacao:'pendente',periodo:dv.periodo||'',parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''})));
+    try{ await inserir('despesas',falt.map(dv=>({descricao:'Pagamento · '+dv.nome,valor:r2(dv.parcela),categoria:catDividas(),comportamento:'fixa',formaPagamento:dv.formaPagamento||'',vencimento:vencDivida(dv,ym),situacao:'pendente',...comEntrada(dv.entradaId),parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''})));
       toast(`${falt.length} ${falt.length>1?'pagamentos lançados':'pagamento lançado'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
   estrategia: async el => { const m=metaDe('quitar_dividas'); await salvarMeta('quitar_dividas',{dados:{...(m?.dados||{}),estrategia:el.dataset.v}}); },
   metaDividas: () => { const m=metaDe('quitar_dividas'), e=entradaPlano(null), min=MT().minimoMensal(e);
@@ -1089,14 +1068,14 @@ function alertasMetas(ym){
 
 /* ---------- contas fixas: lançamento automático ---------- */
 const HORIZONTE_REC = 11; // mês atual + 11 = 12 meses lançados à frente
-const linhaRecorrente = (t, ym) => ({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',
+const linhaRecorrente = (t, ym) => ({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',...comEntrada(t.entradaId),
   vencimento:ym+'-'+String(Math.min(+t.dia||10,diasNoMes(ym))).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||'',favorecido:t.favorecido||''});
 // cria o modelo; sem a atualização 008, grava sem o controle de meses lançados
 async function inserirRecorrencia(o){ try{ return await inserir('recorrencias',o); }catch(e){ const m=e?.message||'';
   if(o.tipo==='receita' && /(tipo|origem)/.test(m)) throw {message:'Para receitas fixas, execute a atualização 009_receitas_fixas.sql no Supabase (SQL Editor).'};
   if(/gerado_ate/.test(m)){ const {geradoAte,...resto}=o; return await inserirRecorrencia(resto); } throw e; } }
 const dataNoMes = (ym,dia) => ym+'-'+String(Math.min(+dia||10,diasNoMes(ym))).padStart(2,'0');
-const linhaReceitaFixa = (t, ym) => ({descricao:t.descricao,origem:t.origem||'Salário',valorPrevisto:r2(t.valor),dataPrevista:dataNoMes(ym,t.dia),situacao:'prevista',periodo:t.periodo||'',recorrenciaId:t.id});
+const linhaReceitaFixa = (t, ym) => { const e=entradaById(t.entradaId); return {descricao:t.descricao,origem:t.origem||'Salário',valorPrevisto:r2(t.valor),dataPrevista:e&&e.ativo!==false?dataRegra(e,ym):dataNoMes(ym,t.dia),situacao:'prevista',...comEntrada(t.entradaId),recorrenciaId:t.id}; };
 let gerandoRec=false;
 async function garantirRecorrentes(){
   if(gerandoRec || !S.recor.length || S.fase!=='pronto') return;
@@ -1135,8 +1114,8 @@ async function aplicarModeloFuturo(t, novo, desde){
   }
   for(const x of alvos){ if(novo.ativo===false && compL(t,x)>atual) continue;
     const ym=compL(t,x), m={...t,...novo,id:t.id};
-    const patch = R ? (({descricao,origem,valorPrevisto,dataPrevista,periodo})=>({descricao,origem,valorPrevisto,dataPrevista,periodo}))(linhaReceitaFixa(m,ym))
-      : (l=>({descricao:l.descricao,valor:l.valor,categoria:l.categoria,formaPagamento:l.formaPagamento,periodo:l.periodo,vencimento:l.vencimento,chavePix:l.chavePix,pixCopiaCola:l.pixCopiaCola}))(linhaRecorrente(m,ym));
+    const patch = R ? (({descricao,origem,valorPrevisto,dataPrevista,entradaId})=>({descricao,origem,valorPrevisto,dataPrevista,...(entradaId!==undefined?{entradaId}:{})}))(linhaReceitaFixa(m,ym))
+      : (l=>({descricao:l.descricao,valor:l.valor,categoria:l.categoria,formaPagamento:l.formaPagamento,...comEntrada(l.entradaId),vencimento:l.vencimento,chavePix:l.chavePix,pixCopiaCola:l.pixCopiaCola}))(linhaRecorrente(m,ym));
     chk(await sb.from(tab).update(toDb(patch)).eq('id',x.id).eq('espaco_id',S.esp)); }
   await recarregar(tab);
 }
@@ -1395,7 +1374,7 @@ function formCartao(c){
     <div class="field"><label for="kF">Dia de fechamento</label><input id="kF" name="fech" type="number" min="1" max="31" required value="${c.diaFechamento||''}"></div>
     <div class="field"><label for="kV">Dia de vencimento</label><input id="kV" name="venc" type="number" min="1" max="31" required value="${c.diaVencimento||''}"></div>
     ${temContas()&&contasAtivas().length?`<div class="field"><label for="kC">Fatura paga pela conta</label><select id="kC" name="conta">${optsContas(c.contaPagamento||contaPadrao()?.id)}</select></div>`:''}
-    <div class="field"><label for="kP">Pagar com o recebimento</label><select id="kP" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],c.periodo||'')}</select></div>
+    ${campoEntradaPagar(c.entradaId,'kP')}
     ${novo?'':`<label class="check full"><input type="checkbox" name="ativo" ${c.ativo!==false?'checked':''}> Cartão em uso (desmarque para arquivar)</label>`}
   </div><p class="note">Compras feitas a partir do dia de fechamento entram na fatura seguinte. Os dias estão na fatura ou no app do banco.</p>
   ${novo?rodape('Cadastrar cartão'):`<p class="err" id="formErr"></p><footer><button type="button" class="btn danger" data-act="delCartao" data-id="${c.id}" style="margin-right:auto">Excluir</button><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primary" type="submit">Salvar</button></footer>`}</form>`;
@@ -1403,7 +1382,7 @@ function formCartao(c){
 function lerCartao(f){ const E=f.elements, L=E.limite.value.trim()?parseValor(E.limite.value):0, F=+E.fech.value, V=+E.venc.value;
   if(!E.nome.value.trim()) return 'Informe o nome do cartão.'; if(isNaN(L)||L<0) return 'Informe o limite, por exemplo 5000,00.';
   if(!(F>=1&&F<=31)||!(V>=1&&V<=31)) return 'Informe os dias de fechamento e vencimento (1 a 31).'; if(F===V) return 'O fechamento e o vencimento não podem ser no mesmo dia.';
-  return {nome:E.nome.value.trim(),limite:r2(L),diaFechamento:F,diaVencimento:V,contaPagamento:E.conta?.value||null,periodo:E.periodo.value,...(E.ativo?{ativo:E.ativo.checked}:{})}; }
+  return {nome:E.nome.value.trim(),limite:r2(L),diaFechamento:F,diaVencimento:V,contaPagamento:E.conta?.value||null,...(E.entradaId?{entradaId:E.entradaId.value||null}:{}),...(E.ativo?{ativo:E.ativo.checked}:{})}; }
 async function gravarCartao(id, patch){
   if(id) chk(await sb.from('cartoes').update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp)); else chk(await sb.from('cartoes').insert({...toDb(patch),espaco_id:S.esp}));
   await carregarCartoes();
@@ -1461,12 +1440,6 @@ function alertasCartoes(){
 /* ---------- painel do Início (Etapa 3 da evolução) ---------- */
 const fimMes = ym => ym+'-'+String(diasNoMes(ym)).padStart(2,'0');
 const ehReceitaReal = r => ativa(r) && r.natureza!=='estorno';
-/* próxima entrada prevista (receita ainda não recebida, a partir de hoje) */
-function proximaEntrada(){
-  const h=hoje(), R=S.rec.filter(r=>ehReceitaReal(r) && r.situacao!=='recebida' && r.dataPrevista && r.dataPrevista>=h).sort((a,b)=>a.dataPrevista.localeCompare(b.dataPrevista));
-  if(!R.length) return null; const d=R[0].dataPrevista, mesmas=R.filter(r=>r.dataPrevista===d);
-  return {data:d, valor:sum(mesmas,r=>r.valorPrevisto), descricao:mesmas.map(r=>r.descricao).join(', ')};
-}
 /* faturas com algo a pagar, como compromissos com data */
 const faturasAPagar = () => temCartoes() ? cartoesAtivos().flatMap(c=>faturasDoCartao(c).filter(f=>f.resta>0).map(f=>({cartao:c,...f}))) : [];
 /* tudo o que precisa sair antes de uma data (inclui o que já venceu) */
@@ -1474,12 +1447,6 @@ function compromissosAte(lim){
   const D=S.desp.filter(d=>ativa(d) && !d.cartaoId && d.situacao!=='paga' && d.vencimento && d.vencimento<lim);
   const F=faturasAPagar().filter(f=>f.venc<lim);
   return {D, F, contas:sum(D,valorLiq), faturas:r2(F.reduce((a,f)=>a+f.resta,0)), total:r2(sum(D,valorLiq)+F.reduce((a,f)=>a+f.resta,0))};
-}
-/* Disponível para gastar = saldo em conta − compromissos que vencem antes da próxima entrada */
-function disponivel(){
-  if(!(temContas() && contasAtivas().length)) return null;
-  const pe=proximaEntrada(), lim=pe?pe.data:addMes(hoje().slice(0,7),1)+'-01', saldo=saldoEmConta(), c=compromissosAte(lim);
-  return {saldo, pe, lim, c, livre:r2(saldo-c.total)};
 }
 /* saldo dia a dia do mês: realizado até hoje, previsto depois */
 function serieSaldoMes(ym){
@@ -1554,19 +1521,21 @@ function vInicio(){
   const fApagar=faturasAPagar(), fAbertas=fApagar.filter(f=>f.fat<=addMes(atual,1)), fVenc=fApagar.filter(f=>f.status==='vencida');
   const venc=S.desp.filter(d=>ativa(d)&&!d.cartaoId&&sitDesp(d)==='atrasada');
   const comp=compromissosAte(addMes(atual,1)+'-01');
-  const prox=[...S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).map(d=>({descricao:d.descricao,vencimento:d.vencimento,periodo:d.periodo,valor:valorLiq(d)})),
-    ...fApagar.filter(f=>f.venc>=h).map(f=>({descricao:'Fatura '+f.cartao.nome,vencimento:f.venc,periodo:f.cartao.periodo,valor:f.resta}))].sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
+  const prox=[...S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento&&d.vencimento>=h).map(d=>({descricao:d.descricao,vencimento:d.vencimento,entradaId:d.entradaId,valor:valorLiq(d)})),
+    ...fApagar.filter(f=>f.venc>=h).map(f=>({descricao:'Fatura '+f.cartao.nome,vencimento:f.venc,entradaId:f.cartao.entradaId,valor:f.resta}))].sort((a,b)=>a.vencimento.localeCompare(b.vencimento)).slice(0,6);
   const al=alertas(ym), vazio=!S.rec.length&&!S.desp.length, serie=serieSaldoMes(ym);
   const top=[...rs.D].sort((a,b)=>valorLiq(b)-valorLiq(a)).slice(0,5);
   return `
   <section class="saudacao"><h2>${saudacao()}${primeiroNome()?', '+esc(primeiroNome()):''}</h2><p>${esc(dataExtenso())} · ${esc(minhaFrase())}</p></section>
   ${blocoConferir()}
   ${vazio?`<div class="empty"><strong>Vamos começar pelo essencial</strong>Cadastre suas contas com o saldo de hoje, depois as receitas e as contas do mês. O painel se monta a partir dos seus dados reais.<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="novaConta">Cadastrar conta</button><button class="btn" data-act="novo" data-tipo="receita">Registrar receita</button></div></div>`:''}
-  ${dp?`<section class="hero2">
+  ${dp?(()=>{ const c=dp.ciclo, rc=c.semConfig?null:resumoCiclo(c);
+    return `<section class="hero2">
+    <div class="h2-top"><span class="eyebrow">${c.semConfig?'Mês atual':'Ciclo atual'}</span><b>${dataCurta(c.ini)} → ${dataCurta(c.fim)}</b>${c.semConfig?`<button class="btn sm ghost" data-act="ir" data-v="config">Configurar datas de recebimento</button>`:`<span class="small muted">da entrada ${esc(c.nome)} até a próxima</span>`}</div>
     <div class="h2c"><span class="lbl">Saldo em conta</span><b class="num">${money(dp.saldo)}</b><span class="sub">hoje, em ${contasAtivas().length} ${contasAtivas().length>1?'contas':'conta'}</span></div>
-    <div class="h2c livre ${dp.livre<0?'neg':''}"><span class="lbl">Disponível para gastar</span><b class="num">${money(dp.livre)}</b><span class="sub">${dp.pe?`até a próxima entrada, ${dataCurta(dp.pe.data)}`:'até o fim do mês (sem entrada prevista)'}</span></div>
-    <div class="h2-calc"><span>${money(dp.saldo)} em conta</span><span>− ${money(dp.c.contas)} em ${dp.c.D.length} ${dp.c.D.length===1?'conta':'contas'} a pagar</span>${dp.c.F.length?`<span>− ${money(dp.c.faturas)} em ${dp.c.F.length===1?'fatura':'faturas'}</span>`:''}<span>= <b>${money(dp.livre)}</b> livre${dp.pe?` até ${dataCurta(dp.pe.data)}`:''}</span></div>
-  </section>`:(temContas()&&!S.contasErro?`<section class="contas-faixa vazia"><div><b>Saldo em conta e disponível para gastar</b><span class="small muted">Cadastre suas contas com o saldo de hoje para ver quanto você tem e quanto está realmente livre.</span></div><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Cadastrar conta</button></section>`:'')}
+    <div class="h2c livre ${dp.livre<0?'neg':''}"><span class="lbl">Disponível até ${dataCurta(dp.lim)}</span><b class="num">${money(dp.livre)}</b><span class="sub">${c.semConfig?'até o fim do mês':`até a próxima entrada${dp.pe?.valor?` (prevista ${money(dp.pe.valor)})`:''}`}</span></div>
+    <div class="h2-calc">${rc?`<span>Início do ciclo ${money(rc.saldoIni)}</span><span>+ ${money(rc.entradas)} entradas</span><span>− ${money(rc.pagos)} pagos</span>${Math.abs(rc.outros)>=0.01?`<span>${rc.outros>0?'+':'−'} ${money(Math.abs(rc.outros))} outros movimentos</span>`:''}<span>= ${money(dp.saldo)} hoje</span>`:`<span>${money(dp.saldo)} em conta</span>`}<span>− ${money(dp.c.contas)} em ${dp.c.D.length} ${dp.c.D.length===1?'conta':'contas'} até ${dataCurta(dp.lim)}</span>${dp.c.F.length?`<span>− ${money(dp.c.faturas)} em ${dp.c.F.length===1?'fatura':'faturas'}</span>`:''}${dp.entraEv?`<span>+ ${money(dp.entraEv)} entradas eventuais previstas</span>`:''}<span>= <b>${money(dp.livre)}</b> disponível</span></div>
+  </section>`; })():(temContas()&&!S.contasErro?`<section class="contas-faixa vazia"><div><b>Saldo em conta e disponível para gastar</b><span class="small muted">Cadastre suas contas com o saldo de hoje para ver quanto você tem e quanto está realmente livre.</span></div><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Cadastrar conta</button></section>`:'')}
   <section><div class="section-head"><h2>${ym===atual?'Este mês':mesLabel(ym)}</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
     <div class="kpis">
       <div class="kpi"><span class="lbl">Receitas do mês</span><span class="val pos">${money(rs.recReal)}</span><span class="sub">recebido de ${money(rs.recEsp)} previstos</span></div>
@@ -1578,7 +1547,7 @@ function vInicio(){
     </div></section>
   <div class="grid2">
     <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas e faturas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
-    <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillP(d.periodo)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>
+    <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillE(d.entradaId)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>
   </div>
   ${serie?`<section class="panel"><h3>Saldo ao longo do mês</h3>${graficoSaldo(serie)}</section>`:''}
   <div class="grid2">
@@ -1591,8 +1560,189 @@ function vInicio(){
   </div>`;
 }
 
+/* ---------- ciclos financeiros (datas de recebimento configuráveis) ----------
+   MÊS = referência contábil e histórica (relatórios, orçamento).
+   CICLO = de uma entrada até a próxima: referência para disponível, planejamento e alertas.
+   As entradas vêm de configuracoes.entradas (regra de data) e, em cada mês, da data da
+   receita ligada àquela entrada (mudar a data da receita muda o ciclo só naquele mês). */
+const REGRAS_ENTRADA = {dia:'Dia fixo do mês',primeiro_util:'Primeiro dia útil',ultimo_util:'Último dia útil',util:'N-ésimo dia útil'};
+const ciclosOk = () => S.ciclosOk===true;
+const entradasTodas = () => Array.isArray(S.cfg?.entradas) ? S.cfg.entradas : [];
+const entradasCfg = () => entradasTodas().filter(e=>e && e.ativo!==false);
+const entradaById = id => id ? entradasTodas().find(e=>e.id===id) : null;
+const comEntrada = v => ciclosOk() ? {entradaId:v||null} : {};
+const addDias = (d,n) => { const x=new Date(d+'T12:00:00Z'); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
+const ehDiaUtil = d => { const w=new Date(d+'T12:00:00Z').getUTCDay(); return w!==0 && w!==6; };
+function dataRegra(e, ym){
+  const n=diasNoMes(ym);
+  if(e.regra==='ultimo_util'){ for(let i=n;i>=1;i--){ const d=ym+'-'+pad2(i); if(ehDiaUtil(d)) return d; } }
+  if(e.regra==='primeiro_util' || e.regra==='util'){ const alvo=e.regra==='util'?Math.max(1,+e.dia||1):1; let k=0;
+    for(let i=1;i<=n;i++){ const d=ym+'-'+pad2(i); if(ehDiaUtil(d) && ++k===alvo) return d; } return ym+'-'+pad2(n); }
+  return diaNoMes(ym, e.dia||1);
+}
+const rotuloEntrada = e => !e ? '' : (String(e.nome||'').trim() || (e.regra==='ultimo_util'?'Último dia útil':e.regra==='primeiro_util'?'1º dia útil':e.regra==='util'?`${e.dia}º dia útil`:`Dia ${e.dia}`));
+const pillE = id => { const e=entradaById(id); return e ? `<span class="pill ent">Entrada ${esc(rotuloEntrada(e))}</span>` : ''; };
+const recsDaEntrada = (e,ym) => S.rec.filter(r=>r.entradaId===e.id && ativa(r) && (r.dataPrevista||'').slice(0,7)===ym);
+/* data da entrada e no mês ym: a receita ligada manda; sem receita, vale a regra */
+function marcoDe(e, ym){
+  const R=recsDaEntrada(e,ym), datas=R.map(r=>r.situacao==='recebida'&&r.dataEfetiva?r.dataEfetiva:r.dataPrevista).filter(Boolean).sort();
+  return {e, ym, data:datas[0]||dataRegra(e,ym), receitas:R, esperado:sum(R,recEsperado), recebido:sum(R.filter(r=>r.situacao==='recebida'),r=>r.valorRecebido),
+    aReceber:sum(R.filter(r=>r.situacao!=='recebida'),r=>r.valorPrevisto), recebida:R.length>0 && R.every(r=>r.situacao==='recebida')};
+}
+function ciclosEntre(de, ate){
+  if(!entradasCfg().length) return [];
+  const ms=[]; for(let m=addMes(de,-1); m<=addMes(ate,1); m=addMes(m,1)) for(const e of entradasCfg()) ms.push(marcoDe(e,m));
+  ms.sort((a,b)=>a.data.localeCompare(b.data));
+  const g=[]; for(const m of ms){ const u=g[g.length-1]; if(u && u.data===m.data) u.marcos.push(m); else g.push({data:m.data,marcos:[m]}); }
+  const cs=[]; for(let i=0;i<g.length-1;i++) cs.push({ini:g[i].data, fim:g[i+1].data, marcos:g[i].marcos, prox:g[i+1].marcos, nome:g[i].marcos.map(m=>rotuloEntrada(m.e)).join(' + ')});
+  return cs;
+}
+const passou = (data, marcos) => data<hoje() || (data===hoje() && marcos.every(m=>m.recebida));
+/* ciclo em que estamos: começou numa entrada já ocorrida e termina na próxima ainda não ocorrida */
+function cicloAtual(){
+  const h=hoje(), atual=h.slice(0,7);
+  if(!entradasCfg().length) return {ini:atual+'-01', fim:addMes(atual,1)+'-01', marcos:[], prox:[], nome:'', semConfig:true};
+  const cs=ciclosEntre(addMes(atual,-1), addMes(atual,1));
+  return cs.find(c=>passou(c.ini,c.marcos) && !passou(c.fim,c.prox)) || cs.find(c=>c.fim>h) || cs[cs.length-1];
+}
+/* próxima entrada (pelos ciclos; sem datas configuradas, a primeira receita prevista) */
+function proximaEntrada(){
+  const c=cicloAtual();
+  if(!c.semConfig) return {data:c.fim, valor:sum(c.prox,m=>m.aReceber||m.esperado), descricao:c.prox.map(m=>m.receitas.length?m.receitas.map(r=>r.descricao).join(', '):rotuloEntrada(m.e)).join(' + '), nome:c.prox.map(m=>rotuloEntrada(m.e)).join(' + '), semValor:!c.prox.some(m=>m.receitas.length)};
+  const h=hoje(), R=S.rec.filter(r=>ehReceitaReal(r) && r.situacao!=='recebida' && r.dataPrevista && r.dataPrevista>=h).sort((a,b)=>a.dataPrevista.localeCompare(b.dataPrevista));
+  if(!R.length) return null; const d=R[0].dataPrevista, mesmas=R.filter(r=>r.dataPrevista===d);
+  return {data:d, valor:sum(mesmas,r=>r.valorPrevisto), descricao:mesmas.map(r=>r.descricao).join(', ')};
+}
+/* entradas eventuais previstas (sem ligação com as datas de recebimento) num intervalo */
+const eventuaisEntre = (de, ate) => S.rec.filter(r=>ehReceitaReal(r) && r.situacao!=='recebida' && !entradaById(r.entradaId) && r.dataPrevista && r.dataPrevista>=de && r.dataPrevista<ate);
+/* Disponível até a próxima entrada = saldo + entradas eventuais previstas antes dela − contas e faturas que vencem antes dela − reservas */
+function disponivel(){
+  if(!(temContas() && contasAtivas().length)) return null;
+  const c=cicloAtual(), lim=c.fim, saldo=saldoEmConta(), comp=compromissosAte(lim), ev=eventuaisEntre(hoje(),lim), entraEv=sum(ev,r=>r.valorPrevisto), reservas=0;
+  return {saldo, ciclo:c, lim, c:comp, ev, entraEv, reservas, pe:proximaEntrada(), livre:r2(saldo+entraEv-comp.total-reservas)};
+}
+/* o que aconteceu no ciclo até hoje */
+function resumoCiclo(c){
+  const h=hoje(), ini=c.ini, saldoIni=saldoEmConta(addDias(ini,-1)), saldoHoje=saldoEmConta(h);
+  const dentro = d => d && d>=ini && d<=h;
+  const entradas=sum(S.rec.filter(r=>ehReceitaReal(r)&&r.situacao==='recebida'&&dentro(r.dataEfetiva)),r=>r.valorRecebido);
+  const pagos=r2(sum(S.desp.filter(d=>d.situacao==='paga'&&dentro(d.dataPagamento||d.vencimento)&&compraSaiDaConta(d)),d=>d.valor)+sum((S.pagFat||[]).filter(p=>dentro(p.data)),p=>p.valor));
+  return {saldoIni, entradas, pagos, outros:r2(saldoHoje-(saldoIni+entradas-pagos)), saldoHoje};
+}
+/* em qual ciclo um compromisso é pago: o escolhido (entrada no mês de competência) ou o que contém o vencimento */
+function cicloDoItem(venc, entradaId, cs){
+  if(!venc) return null; const e=entradaById(entradaId);
+  if(e && e.ativo!==false){ const d=marcoDe(e,venc.slice(0,7)).data, c=cs.find(x=>x.ini===d); if(c) return c; }
+  return cs.find(x=>venc>=x.ini && venc<x.fim) || null;
+}
+/* saldo projetado ciclo a ciclo, a partir de hoje (base das projeções e alertas) */
+function projecaoCiclos(qtd=4){
+  const c0=cicloAtual(); if(c0.semConfig || !(temContas() && contasAtivas().length)) return [];
+  const h=hoje(), atual=h.slice(0,7), cs=ciclosEntre(addMes(atual,-1), addMes(atual,Math.ceil(qtd/ Math.max(1,entradasCfg().length))+2)).filter(c=>c.ini>=c0.ini).slice(0,qtd);
+  let saldo=saldoEmConta(); const out=[];
+  cs.forEach((c,i)=>{
+    const entra = (i===0?0:sum(c.marcos,m=>m.aReceber)) + sum(eventuaisEntre(i===0?h:c.ini, c.fim),r=>r.valorPrevisto);
+    const D = i===0 ? compromissosAte(c.fim).total
+      : r2(sum(S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.situacao!=='paga'&&d.vencimento>=c.ini&&d.vencimento<c.fim),valorLiq) + faturasAPagar().filter(f=>f.venc>=c.ini&&f.venc<c.fim).reduce((a,f)=>a+f.resta,0));
+    const fimS=r2(saldo+entra-D); out.push({...c, inicio:r2(saldo), entradas:r2(entra), saidas:r2(D), fimSaldo:fimS}); saldo=fimS; });
+  return out;
+}
+
+/* carregamento: confere se a atualização 013 existe */
+async function carregarCiclos(){
+  const id=S.esp;
+  try{ const d=chk(await sb.from('configuracoes').select('entradas').eq('espaco_id',id).maybeSingle()); if(S.esp!==id) return;
+    S.ciclosOk=true; S.cfg={...S.cfg, entradas:d?.entradas||[]}; }
+  catch(e){ console.error(e); if(S.esp===id) S.ciclosOk=false; }
+  schedule();
+}
+async function salvarEntradas(lista){ chk(await sb.from('configuracoes').upsert({espaco_id:S.esp,entradas:lista},{onConflict:'espaco_id'})); S.cfg={...S.cfg,entradas:lista}; await carregarCiclos(); }
+/* aplica a regra nova às receitas ainda não recebidas daquela entrada, do mês atual em diante */
+async function reaplicarEntrada(e, desde=hoje().slice(0,7)){
+  const R=S.rec.filter(r=>r.entradaId===e.id && r.situacao!=='recebida' && ativa(r) && (r.dataPrevista||'').slice(0,7)>=desde);
+  for(const r of R){ const d=dataRegra(e,r.dataPrevista.slice(0,7)); if(d!==r.dataPrevista) chk(await sb.from('receitas').update({data_prevista:d}).eq('id',r.id).eq('espaco_id',S.esp)); }
+  if(R.length) await recarregar('receitas');
+}
+
+/* seletores dos formulários */
+const optsEntradaPagar = sel => opts([['','Automático (pela data de vencimento)'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])], sel||'');
+const campoEntradaPagar = (sel, id='fEnt') => ciclosOk() && entradasCfg().length ? `<div class="field"><label for="${id}">Pagar com a entrada</label><select id="${id}" name="entradaId">${optsEntradaPagar(sel)}</select></div>` : '';
+
+/* tela: datas de recebimento (Configurações) */
+function painelEntradas(){
+  if(!ciclosOk()) return `<section class="panel"><h3>Datas de recebimento</h3><div class="alert warn"><span class="dot"></span><div><p>Para configurar os ciclos financeiros, execute a atualização <b>013_ciclos.sql</b> no Supabase (SQL Editor).</p></div></div></section>`;
+  const es=entradasCfg(), h=hoje(), atual=h.slice(0,7);
+  return `<section class="panel"><div class="section-head"><h3 style="margin:0">Datas de recebimento</h3><div class="right"><button class="btn sm primary" data-act="novaEntrada">${icon(I.plus)}Nova data</button></div></div>
+    <p class="small muted" style="margin:0 0 10px">As datas em que o dinheiro costuma entrar. Cada ciclo vai de uma entrada até a próxima, e o Meu Eixo calcula quanto você pode usar até lá. Se em algum mês a entrada mudar de data, edite só a receita daquele mês.</p>
+    ${es.length?`<div class="list">${es.map(e=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(rotuloEntrada(e))}</div><div class="meta"><span>${esc(REGRAS_ENTRADA[e.regra]||'')}${e.regra==='dia'||e.regra==='util'?` · ${e.dia}`:''}</span><span>próximas: ${[0,1,2].map(i=>dataCurta(marcoDe(e,addMes(atual,i)).data)).join(', ')}</span><span>${S.rec.filter(r=>r.entradaId===e.id).length} receitas ligadas</span></div></div><div class="ops" style="grid-column:auto"><button class="btn sm ghost" data-act="editEntrada" data-id="${e.id}" aria-label="Editar">${icon(I.edit)}</button></div></div>`).join('')}</div>`
+      :`<div class="empty"><strong>Nenhuma data configurada</strong>Sem datas, o disponível considera o mês inteiro. Cadastre os dias em que você costuma receber.</div>`}</section>`;
+}
+function formEntrada(e){
+  e=e||{regra:'dia',dia:10}; const novo=!e.id;
+  return `<form data-form="quick">${head(novo?'Nova data de recebimento':'Editar data de recebimento')}<div class="form-grid">
+    <div class="field"><label for="enR">Regra</label><select id="enR" name="regra">${opts(Object.entries(REGRAS_ENTRADA),e.regra)}</select></div>
+    <div class="field" id="enDiaF"><label for="enD" id="enDL">Dia</label><input id="enD" name="dia" type="number" min="1" max="31" value="${e.dia||''}"></div>
+    <div class="field full"><label for="enN">Nome (opcional)</label><input id="enN" name="nome" maxlength="40" value="${esc(e.nome)}" placeholder="Ex.: Salário, Comissão"></div>
+    <p class="note full" id="enPrev" style="margin:0"></p></div>
+    ${novo?'':`<p class="note">A nova regra vale para as receitas desta entrada ainda não recebidas, deste mês em diante. Meses já recebidos não mudam.</p>`}
+    ${novo?rodape('Salvar'):`<p class="err" id="formErr"></p><footer><button type="button" class="btn danger" data-act="delEntrada" data-id="${e.id}" style="margin-right:auto">Remover</button><button type="button" class="btn" data-act="fechar">Cancelar</button><button class="btn primary" type="submit">Salvar</button></footer>`}</form>`;
+}
+function wireEntrada(root){ const f=root.querySelector('form'), sync=()=>{ const r=f.elements.regra.value; root.querySelector('#enDiaF').hidden=!(r==='dia'||r==='util'); root.querySelector('#enDL').textContent=r==='util'?'Qual dia útil (1º, 2º…)':'Dia do mês';
+  const e={regra:r,dia:+f.elements.dia.value||1}, a=hoje().slice(0,7); root.querySelector('#enPrev').textContent='Próximas datas: '+[0,1,2,3].map(i=>dataBR(dataRegra(e,addMes(a,i)))).join(' · '); };
+  f.addEventListener('input',sync); f.addEventListener('change',sync); sync(); }
+function lerEntrada(f){ const r=f.elements.regra.value, d=+f.elements.dia.value; if((r==='dia'||r==='util') && !(d>=1&&d<=31)) return 'Informe o dia (1 a 31).'; if(r==='util'&&d>23) return 'Use até o 23º dia útil.';
+  return {regra:r, dia:(r==='dia'||r==='util')?d:null, nome:f.elements.nome.value.trim()}; }
+
+const acoesCiclos = {
+  novaEntrada: () => abrirModal(formEntrada(), async f=>{ const d=lerEntrada(f); if(typeof d==='string') return d; await salvarEntradas([...entradasTodas(),{id:'e'+uid(),ativo:true,...d}]); toast('Data de recebimento salva.'); }, wireEntrada),
+  editEntrada: el => { const e=entradaById(el.dataset.id); if(!e) return;
+    abrirModal(formEntrada(e), async f=>{ const d=lerEntrada(f); if(typeof d==='string') return d; const novo={...e,...d};
+      await salvarEntradas(entradasTodas().map(x=>x.id===e.id?novo:x)); await reaplicarEntrada(novo); toast('Data de recebimento atualizada.'); }, wireEntrada); },
+  delEntrada: el => { const e=entradaById(el.dataset.id); if(!e) return;
+    confirmar('Remover data de recebimento',`Remover “${esc(rotuloEntrada(e))}”? As receitas e contas ligadas a ela continuam em Lançamentos; as receitas passam a contar como eventuais.`,[{t:'Remover',fn:async()=>{ await salvarEntradas(entradasTodas().map(x=>x.id===e.id?{...x,ativo:false}:x)); toast('Data removida.'); }}]); }
+};
+
+/* alertas pelos ciclos */
+function alertasCiclos(){
+  const a=[], dp=disponivel(); if(!dp) return a;
+  if(dp.livre<0) a.push({k:'danger',t:`Até a próxima entrada (${dataCurta(dp.lim)}) faltam ${money(-dp.livre)} para cobrir as contas e faturas.`,h:'Veja no Planejamento o que pode ser adiado ou pago com a entrada seguinte.'});
+  const pj=projecaoCiclos(3).slice(1);
+  const neg=pj.find(c=>c.fimSaldo<0); if(neg) a.push({k:'warn',t:`O ciclo ${dataCurta(neg.ini)} → ${dataCurta(neg.fim)} tende a terminar negativo (${money(neg.fimSaldo)}).`,h:'A previsão considera o saldo de hoje, as entradas previstas e as contas lançadas até lá.'});
+  return a;
+}
+
+/* Planejamento: compromissos organizados pelos ciclos que tocam o mês */
+function vCiclosPlanejamento(ym){
+  if(!ciclosOk()) return `<section><div class="section-head"><h2>Ciclos financeiros</h2></div><div class="alert warn"><span class="dot"></span><div><p>Execute a atualização <b>013_ciclos.sql</b> no Supabase para organizar as contas pelos ciclos entre as suas entradas.</p></div></div></section>`;
+  if(!entradasCfg().length) return `<section><div class="section-head"><h2>Ciclos financeiros</h2></div><div class="empty"><strong>Configure as suas datas de recebimento</strong>Com elas, cada conta é ligada à entrada que vai pagá-la e você vê quanto sobra em cada ciclo.<div class="actions" style="justify-content:center;margin-top:12px"><button class="btn primary" data-act="novaEntrada">Configurar datas</button></div></div></section>`;
+  const ini=ym+'-01', fimM=addMes(ym,1)+'-01', todos=ciclosEntre(addMes(ym,-2),addMes(ym,2)), cs=todos.filter(c=>c.fim>ini && c.ini<fimM), h=hoje();
+  const desp=S.desp.filter(d=>ativa(d)&&!d.cartaoId&&d.vencimento), fats=faturasAPagar().concat(temCartoes()?cartoesAtivos().flatMap(c=>faturasDoCartao(c).filter(f=>f.resta<=0&&f.total>0).map(f=>({cartao:c,...f}))):[]);
+  let carry=null;
+  const blocos=cs.map((c,i)=>{
+    const D=desp.filter(d=>cicloDoItem(d.vencimento,d.entradaId,todos)===c).sort((a,b)=>a.vencimento.localeCompare(b.vencimento));
+    const F=fats.filter(f=>{ const cc=cicloDoItem(f.venc,f.cartao.entradaId,todos); return cc===c; });
+    const RL=c.marcos.flatMap(m=>m.receitas), RE=S.rec.filter(r=>ehReceitaReal(r)&&!entradaById(r.entradaId)&&(r.situacao==='recebida'?r.dataEfetiva:r.dataPrevista)>=c.ini&&(r.situacao==='recebida'?r.dataEfetiva:r.dataPrevista)<c.fim);
+    const entrada=sum(RL,recEsperado), extra=sum(RE,recEsperado), comp=r2(sum(D,valorLiq)+F.reduce((a,f)=>a+f.total,0)), pagos=r2(sum(D.filter(d=>d.situacao==='paga'),valorLiq)+F.reduce((a,f)=>a+f.pago,0));
+    let base=carry; if(base===null){ base = temContas()&&contasAtivas().length ? saldoEmConta(addDias(c.ini,-1)) : 0; }
+    const fimS=r2(base+entrada+extra-comp); carry=fimS;
+    const atualC = c.ini<=h && h<c.fim;
+    return `<article class="period ${atualC?'atual':''}">
+      <header><span class="day num">${+c.ini.slice(8)}</span><div><h3>Entrada ${esc(c.nome)}${c.marcos.length===1&&c.marcos[0].receitas.length?' · '+esc(c.marcos[0].receitas.map(r=>r.descricao).join(', ')):''}</h3><span class="small muted">ciclo ${dataCurta(c.ini)} → ${dataCurta(c.fim)}${atualC?' · ciclo atual':''}</span></div></header>
+      <div class="figs"><div>${temContas()&&contasAtivas().length&&i===0?'Saldo no início':'Sobra do ciclo anterior'}<b class="${base<0?'neg':''}">${money(base)}</b></div><div>Entrada prevista<b class="pos">${money(entrada)}</b></div>
+        ${extra?`<div>Entradas eventuais<b class="pos">${money(extra)}</b></div>`:''}<div>Compromissos<b>${money(comp)}</b></div><div>Pagos · pendentes<b>${money(pagos)} · ${money(r2(comp-pagos))}</b></div></div>
+      <div class="body">
+        ${RL.length||RE.length?`<div class="small muted" style="padding:8px 4px 0">Entradas</div><div class="list">${[...RL,...RE].map(r=>rowRec(r,{mover:true})).join('')}</div>`:`<p class="small muted" style="padding:8px 4px">Nenhuma receita lançada para esta entrada. Cadastre a receita (por exemplo, o salário) ligada a “${esc(c.nome)}”.</p>`}
+        ${D.length||F.length?`<div class="small muted" style="padding:8px 4px 0">Compromissos</div><div class="list">${D.map(d=>rowDesp(d,{mover:true})).join('')}${F.map(f=>`<div class="row"><div><div class="t">Fatura ${esc(f.cartao.nome)} · ${esc(mesCurto(f.fat))}</div><div class="meta"><span>vence ${dataCurta(f.venc)}</span>${pillFat(f)}</div></div><div class="v">${money(f.total)}</div><div class="ops"><button class="btn sm ghost" data-act="ir" data-v="cartoes">Ver fatura</button></div></div>`).join('')}</div>`:`<p class="small muted" style="padding:0 4px 8px">Nenhum compromisso neste ciclo.</p>`}
+      </div>
+      <footer><span class="small muted">Saldo previsto ao fim do ciclo</span><span class="big ${fimS<0?'neg':'pos'}">${money(fimS)}</span></footer></article>`; });
+  return `<section><div class="section-head"><h2>Ciclos financeiros</h2><p>Cada conta é paga pela entrada que vem antes do vencimento. Você pode escolher outra entrada em cada conta.</p><div class="right"><button class="btn sm ghost" data-act="ir" data-v="config">Datas de recebimento</button></div></div>
+    <div class="periods">${blocos.join('')}</div></section>`;
+}
+
+const segEscopo = (v='este') => `<div class="seg" data-escopo><button type="button" aria-pressed="${v==='este'}" data-act="escopo" data-v="este">Só este mês</button><button type="button" aria-pressed="${v==='proximos'}" data-act="escopo" data-v="proximos">Este e os próximos</button></div><input type="hidden" name="escopo" value="${v}">`;
 /* ---------- ações ---------- */
 const acoes = {
+  escopo: el => { const f=el.closest('form'); f.elements.escopo.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); },
   ir: el => { S.view=el.dataset.v; fecharMenu(); render(); window.scrollTo(0,0); },
   mes: el => { S.mes=addMes(S.mes,+el.dataset.n); render(); if(S.mes>addMes(hoje().slice(0,7),HORIZONTE_REC)) garantirRecorrentes(); },
   tab: el => { S.tab=el.dataset.v; render(); },
@@ -1629,8 +1779,6 @@ const acoes = {
   copiarPix: async el => { const d=S.desp.find(x=>x.id===el.dataset.id)||S.recor.find(x=>x.id===el.dataset.id); if(!d) return; const txt=d.pixCopiaCola||d.chavePix;
     try{ await navigator.clipboard.writeText(txt); toast(d.pixCopiaCola?'Pix copia e cola copiado. Cole no app do banco.':'Chave Pix copiada. Cole no app do banco.'); }
     catch(_){ abrirModal(`<div>${head('Chave Pix')}</div><p class="small muted" style="margin:0">Toque e segure para copiar.</p><p class="code" style="word-break:break-all;margin:0">${esc(txt)}</p>`,null); } },
-  periodo: el => atualizar('despesas',el.dataset.id,{periodo:el.dataset.p}),
-  periodoR: el => atualizar('receitas',el.dataset.id,{periodo:el.dataset.p}),
   excluir: el => { const col=el.dataset.col, id=el.dataset.id;
     if(col==='despesas'){ const d=S.desp.find(x=>x.id===id); if(!d) return;
       if(d.grupoParcela){ const prox=S.desp.filter(x=>x.grupoParcela===d.grupoParcela&&(+x.parcelaAtual)>=(+d.parcelaAtual));
@@ -1646,7 +1794,7 @@ const acoes = {
       confirmar('Excluir receita',`Excluir “${esc(r.descricao)}”? Esta ação não pode ser desfeita.`,[{t:'Excluir',fn:async()=>{ await remover('receitas',id); apagarArquivos([r.comprovante]); toast('Receita excluída.'); }}]); } },
   conf: async el => { const fn=confirmar.cb?.[+el.dataset.i]; if(!fn) return; el.disabled=true; try{ await fn(); fecharModal(); }catch(e){ dbErr(e); el.disabled=false; } },
   gerarRecorrentes: async el => { el.disabled=true; const ym=S.mes, faltam=recorrentesFaltando(ym); const [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
-    try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||''})));
+    try{ await inserir('despesas',faltam.map(t=>({descricao:t.descricao,valor:r2(t.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||'',comportamento:'fixa',...comEntrada(t.entradaId),vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'pendente',parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||'',pixCopiaCola:t.pixCopiaCola||''})));
       toast(`${faltam.length} ${faltam.length>1?'contas fixas lançadas':'conta fixa lançada'} em ${mesLabel(ym)}.`); }catch(e){ dbErr(e); el.disabled=false; } },
   copiarOrc: async () => { await salvarOrc(S.mes,{...orcamentoMes(addMes(S.mes,-1))}); toast('Orçamento copiado do mês anterior.'); },
   novaCat: () => abrirCat(),
@@ -1660,25 +1808,25 @@ const acoes = {
       <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
       <div class="field"><label for="tDia">Dia do recebimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
       <div class="field"><label for="tO">Origem</label><select id="tO" name="origem">${opts(ORIGENS.map(x=>[x,x]),t.origem||'Salário')}</select></div>
-      <div class="field"><label for="tP">Período</label><select id="tP" name="periodo">${opts([['','Sem período'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
+      ${ciclosOk()&&entradasCfg().length?`<div class="field"><label for="tP">Esta receita é</label><select id="tP" name="entradaId">${opts([['','Entrada eventual'],...entradasCfg().map(e=>[e.id,'Entrada '+rotuloEntrada(e)])],t.entradaId||'')}</select></div>`:''}
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (lança todo mês)</label></div>
       <p class="note">A alteração vale para os meses ainda não recebidos, do atual em diante. Ao pausar, os meses futuros não recebidos saem de Lançamentos.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
-      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,origem:f.elements.origem.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked};
+      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,origem:f.elements.origem.value,...(f.elements.entradaId?{entradaId:f.elements.entradaId.value||null}:{}),ativo:f.elements.ativo.checked};
       await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Receita fixa atualizada.'); });
     abrirModal(`<form data-form="quick">${head('Conta fixa recorrente')}<div class="form-grid">
       <div class="field full"><label for="tD">Descrição</label><input id="tD" name="descricao" required value="${esc(t.descricao)}"></div>
       <div class="field"><label for="tV">Valor (R$)</label><input id="tV" name="valor" inputmode="decimal" required value="${fmtInput(t.valor)}"></div>
       <div class="field"><label for="tDia">Dia do vencimento</label><input id="tDia" name="dia" type="number" min="1" max="31" required value="${t.dia}"></div>
       <div class="field"><label for="tC">Categoria</label><select id="tC" name="categoria">${opts(S.cats.map(c=>[c.id,c.nome]),t.categoria)}</select></div>
-      <div class="field"><label for="tP">Pagar com o recebimento</label><select id="tP" name="periodo">${opts([['','Decidir depois'],['10','Dia 10'],['20','Dia 20']],t.periodo||'')}</select></div>
+      ${campoEntradaPagar(t.entradaId,'tP')}
       <div class="field"><label for="tF">Forma de pagamento</label><select id="tF" name="forma"><option value="">Selecione</option>${opts(FORMAS.map(x=>[x,x]),t.formaPagamento)}</select></div>
       <div class="field"><label for="tK">Chave Pix</label><input id="tK" name="chave" maxlength="140" autocomplete="off" value="${esc(t.chavePix)}"></div>
       <div class="field full"><label for="tCC">Pix copia e cola (opcional)</label><input id="tCC" name="copia" maxlength="600" autocomplete="off" value="${esc(t.pixCopiaCola)}"></div>
       <label class="check full"><input type="checkbox" name="ativo" ${t.ativo!==false?'checked':''}> Ativa (gera lançamento todo mês)</label></div>
       <p class="note">A alteração vale para os lançamentos ainda não pagos deste mês em diante. Meses já pagos não mudam. Ao pausar, os meses futuros não pagos saem de Lançamentos.</p>${rodape('Salvar')}</form>`,
     async f=>{ const v=parseValor(f.elements.valor.value), dia=+f.elements.dia.value; if(!(v>0)) return 'Informe o valor.'; if(!(dia>=1&&dia<=31)) return 'Informe um dia entre 1 e 31.';
-      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,periodo:f.elements.periodo.value,ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()};
+      const novo={descricao:f.elements.descricao.value.trim(),valor:r2(v),dia,categoria:f.elements.categoria.value,...(f.elements.entradaId?{entradaId:f.elements.entradaId.value||null}:{}),ativo:f.elements.ativo.checked,formaPagamento:f.elements.forma.value,chavePix:f.elements.chave.value.trim(),pixCopiaCola:f.elements.copia.value.trim()};
       await atualizar('recorrencias',t.id,novo); await aplicarModeloFuturo(t,novo); if(novo.ativo&&t.ativo===false) chk(await sb.from('recorrencias').update({gerado_ate:hoje().slice(0,7)}).eq('id',t.id).eq('espaco_id',S.esp)); await recarregar('recorrencias'); await garantirRecorrentes(); toast('Conta recorrente atualizada.'); }); },
   delRecor: el => { const t=S.recor.find(x=>x.id===el.dataset.id); if(!t) return; const atual=hoje().slice(0,7), R=ehRecR(t), tab=R?'receitas':'despesas';
     const fut=lancsRec(t).filter(x=>!quitadoL(t,x) && ativa(x) && compL(t,x)>atual);
@@ -2383,7 +2531,7 @@ async function processarRapido(files, textoR){
   mostrarResumoFila();
 }
 async function subir(file, hash){ if(!file) return {}; anexo={file,hash}; const a=await enviarArquivo(); anexo=null; return a||{}; }
-const periodoDaData = d => (+String(d||'').slice(8,10)<=15?'10':'20');
+const periodoDaData = () => '';   // os dias 10/20 deixaram de ser regra: a entrada vem da configuração de ciclos
 async function executarAuto(dec, r, file, hash){
   const data=r.data||hoje(), arq=await subir(file,hash), nome=r.nome||'';
   if(dec.acao==='pagar'){ const x=dec.alvo, antes={situacao:x.situacao,valor:x.valor,dataPagamento:x.dataPagamento||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
@@ -2391,13 +2539,13 @@ async function executarAuto(dec, r, file, hash){
     const parc=(+x.parcelas||1)>1?` (parcela ${x.parcelaAtual} de ${x.parcelas})`:'';
     return {tipo:'ok',txt:`Pago: ${x.descricao}${parc} · ${money(r.valor)}`,motivo:dec.motivo,desfazer:{t:'despesas',id:x.id,patch:antes}}; }
   if(dec.acao==='recorrencia'){ const t=dec.modelo, ym=data.slice(0,7), [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();
-    const id=await inserir('despesas',{descricao:t.descricao,valor:r2(r.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||(r.pix?'Pix':''),comportamento:'fixa',periodo:t.periodo||'',vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'paga',dataPagamento:data,parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||r.chave||'',favorecido:t.favorecido||nome,conferido:false,...arq});
+    const id=await inserir('despesas',{descricao:t.descricao,valor:r2(r.valor),categoria:t.categoria||'',subcategoria:t.subcategoria||'',formaPagamento:t.formaPagamento||(r.pix?'Pix':''),comportamento:'fixa',...comEntrada(t.entradaId),vencimento:ym+'-'+String(Math.min(+t.dia||10,last)).padStart(2,'0'),situacao:'paga',dataPagamento:data,parcelas:1,recorrenciaId:t.id,chavePix:t.chavePix||r.chave||'',favorecido:t.favorecido||nome,conferido:false,...arq});
     return {tipo:'ok',txt:`Conta fixa paga: ${t.descricao} · ${money(r.valor)}`,motivo:'conta fixa reconhecida',desfazer:{t:'despesas',id,apagar:true}}; }
   if(dec.acao==='receber'){ const x=dec.alvo, antes={situacao:x.situacao,valorRecebido:x.valorRecebido??null,dataEfetiva:x.dataEfetiva||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
     await atualizar('receitas',x.id,{situacao:'recebida',valorRecebido:r2(r.valor),dataEfetiva:data,conferido:false,favorecido:x.favorecido||nome,...arq});
     return {tipo:'ok',txt:`Recebido: ${x.descricao} · ${money(r.valor)}`,motivo:'receita prevista',desfazer:{t:'receitas',id:x.id,patch:antes}}; }
   if(dec.acao==='historico' && dec.tipo==='receita'){ const b=dec.base;
-    const id=await inserir('receitas',{descricao:b.descricao,origem:b.origem,valorPrevisto:r2(r.valor),valorRecebido:r2(r.valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',periodo:periodoDaData(data),favorecido:nome,conferido:false,...arq});
+    const id=await inserir('receitas',{descricao:b.descricao,origem:b.origem,valorPrevisto:r2(r.valor),valorRecebido:r2(r.valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',favorecido:nome,conferido:false,...arq});
     return {tipo:'ok',txt:`Receita: ${b.descricao} · ${money(r.valor)}`,motivo:'pagador conhecido',desfazer:{t:'receitas',id,apagar:true}}; }
   const b=dec.base, desc=String(b.descricao).replace(/\s+[-–]\s+(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro).*$/i,'');
   const id=await inserir('despesas',{descricao:desc,valor:r2(r.valor),categoria:b.categoria||'',subcategoria:b.subcategoria||'',formaPagamento:r.pix?'Pix':(b.formaPagamento||''),comportamento:'variavel',periodo:'',dataCompra:data,vencimento:data,dataPagamento:data,situacao:'paga',parcelas:1,chavePix:r.chave||b.chavePix||'',favorecido:nome||b.favorecido||'',conferido:false,...arq});
@@ -2432,7 +2580,7 @@ async function salvarNovoRapido(f){
   if(!(valor>0)) return 'Informe o valor.'; if(!data) return 'Informe a data.'; if(!desc) return 'Informe uma descrição curta.';
   const sel=g=>f.querySelector(`.chips[data-nome="${g}"] [aria-pressed="true"]`)?.dataset.v;
   const arq=await subir(file,hash), nome=r.nome||desc;
-  if(tipo==='receita'){ const id=await inserir('receitas',{descricao:desc,origem:sel('origem')||'Outra',valorPrevisto:r2(valor),valorRecebido:r2(valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',periodo:periodoDaData(data),favorecido:nome,...arq});
+  if(tipo==='receita'){ const id=await inserir('receitas',{descricao:desc,origem:sel('origem')||'Outra',valorPrevisto:r2(valor),valorRecebido:r2(valor),dataPrevista:data,dataEfetiva:data,situacao:'recebida',favorecido:nome,...arq});
     return {tipo:'ok',txt:`Receita: ${desc} · ${money(valor)}`,motivo:'nova',desfazer:{t:'receitas',id,apagar:true}}; }
   const cat=sel('categoria'); if(!cat) return 'Escolha a categoria.';
   const rep=E.rep.value, forma=r.pix?'Pix':'', base={descricao:desc,categoria:cat,subcategoria:'',formaPagamento:forma,favorecido:nome,chavePix:r.chave||'',periodo:''};
@@ -2483,7 +2631,7 @@ function blocoConferir(){
     <div class="list">${[...d.map(x=>rowDesp(x)),...r.map(x=>rowRec(x))].join('')}</div></section>`;
 }
 
-Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas, acoesContas, acoesCartoes);
+Object.assign(acoes, acoesAl, acoesCd, acoesCupom, acoesRapido, acoesMetas, acoesContas, acoesCartoes, acoesCiclos);
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', async e=>{
@@ -2540,6 +2688,8 @@ document.addEventListener('change', async e=>{
   if(t.dataset.chg==='cdOpcao'){ const pl=structuredClone(planoMes()); pl.semana[+t.dataset.d][t.dataset.ref]=+t.value; try{ await salvarPlano(pl); }catch(x){ dbErr(x); } return; }
   if(t.dataset.lcpreco){ const v=t.value.trim()===''?null:parseValor(t.value); if(v!==null&&(isNaN(v)||v<0)){ toast('Preço inválido.'); return; } try{ await alterarItem(t.dataset.lcpreco,{preco:v===null?null:r2(v), ...(v>0?{ok:true}:{})}); if(v>0 && !S.alErro5) await precoManual(t.dataset.lcpreco, r2(v)); }catch(x){ dbErr(x); } return; }
   if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.chg==='entradaD'){ try{ await atualizar('despesas',t.dataset.id,{entradaId:t.value||null}); toast(t.value?'Conta ligada a essa entrada.':'Conta volta a seguir a data de vencimento.'); }catch(x){ dbErr(x); } return; }
+  if(t.dataset.chg==='entradaR'){ try{ await atualizar('receitas',t.dataset.id,{entradaId:t.value||null}); toast(t.value?'Receita ligada à entrada.':'Receita marcada como eventual.'); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
   else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }
   else if(t.dataset.orc){ const v=t.value.trim()===''?0:parseValor(t.value); if(isNaN(v)||v<0){ toast('Valor de orçamento inválido.'); return; }

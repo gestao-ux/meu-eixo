@@ -595,3 +595,14 @@ form[data-form="rapidoNovo"],form[data-form="cupom"]{display:flex;flex-direction
 .pl-t i.near{background:var(--warn)} .pl-t i.over{background:var(--danger)}
 .tip{position:fixed;z-index:80;pointer-events:none;background:var(--fg);color:var(--bg);font-size:12.5px;padding:6px 10px;border-radius:8px;box-shadow:var(--shadow);max-width:280px;white-space:normal}
 @media (max-width:700px){ .hero2{grid-template-columns:1fr} .h2c.livre{border-left:0;border-top:1px solid var(--line)} .h2c b{font-size:28px} .h2-calc{padding:10px 16px} .h2c{padding:18px 16px} .cols2-g{height:160px} .hb{grid-template-columns:minmax(80px,34%) minmax(0,1fr) auto;font-size:13px} }
+
+/* ---------- ciclos financeiros ---------- */
+.h2-top{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;padding:14px 24px 0}
+.h2-top b{font-family:var(--f-display);font-weight:500;font-size:20px}
+.hero2 .h2c{padding-top:12px}
+.pill.ent{background:var(--sage-soft);color:var(--sage)}
+.sel-ent{display:inline-flex;align-items:center;gap:6px}
+.sel-ent select{font-size:12.5px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);max-width:190px}
+.period.atual{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+@media (max-width:700px){ .h2-top{padding:14px 16px 0} }
+@media (min-width:601px){ .kpis > .kpi:last-child{grid-column:auto / -1} }

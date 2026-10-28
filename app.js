@@ -49,7 +49,7 @@ const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'i
 
 /* ---------- estado ---------- */
 const S = { rec:[], desp:[], cats:[], recor:[], orc:{}, cfg:{}, espacos:[], esp:null, user:null, perfil:null,
-  mes:hoje().slice(0,7), view:'inicio', tab:'despesas', filtro:{sit:'',cat:''}, fase:'iniciando', auth:'login', authMsg:'', canal:null, membros:null };
+  mes:hoje().slice(0,7), view:'inicio', tab:'despesas', filtro:{sit:[],cat:[]}, fase:'iniciando', auth:'login', authMsg:'', canal:null, membros:null };
 
 const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
@@ -325,7 +325,7 @@ const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto">
 /* ---------- telas ---------- */
 function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
-  if(f.sit) D=D.filter(d=>sitDesp(d)===f.sit); if(f.cat) D=D.filter(d=>d.categoria===f.cat);
+  if(f.sit.length) D=D.filter(d=>f.sit.includes(sitDesp(d))); if(f.cat.length) D=D.filter(d=>f.cat.includes(d.categoria||''));
   D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
   const isD=S.tab==='despesas', isM=S.tab==='movimentacoes';
   return `${blocoConferir()}
@@ -340,9 +340,9 @@ function vFinanceiro(){
     ${isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
     <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
     ${isD?`<div class="filters">
-      <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit"><option value="">Todas</option>${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit===k?'selected':''}>${v}</option>`).join('')}</select></div>
-      <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat"><option value="">Todas</option>${S.cats.map(c=>`<option value="${c.id}" ${f.cat===c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
-    <div class="list">${isD?(D.length?D.map(d=>rowDesp(d)).join(''):`<div class="empty"><strong>Nenhuma despesa ${f.sit||f.cat?'com esses filtros':'em '+mesLabel(ym)}</strong>Use “Nova despesa” para registrar contas, compras parceladas ou despesas fixas.</div>`)
+      <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit" multiple data-vazio="Todas">${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit.includes(k)?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label for="fCat">Categoria</label><select id="fCat" data-chg="fcat" multiple data-vazio="Todas">${S.cats.map(c=>`<option value="${c.id}" ${f.cat.includes(c.id)?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div></div>`:''}
+    <div class="list">${isD?(D.length?D.map(d=>rowDesp(d)).join(''):`<div class="empty"><strong>Nenhuma despesa ${f.sit.length||f.cat.length?'com esses filtros':'em '+mesLabel(ym)}</strong>Use “Nova despesa” para registrar contas, compras parceladas ou despesas fixas.</div>`)
       :(R.length?R.map(r=>rowRec(r)).join(''):`<div class="empty"><strong>Nenhuma receita em ${mesLabel(ym)}</strong>Cadastre salário, comissões e outras entradas com a data prevista. Depois registre o valor efetivamente recebido.</div>`)}</div>`}
   </section>`;
 }
@@ -2678,7 +2678,7 @@ document.addEventListener('click', async e=>{
   try{ await fn(el); }catch(err){ dbErr(err); }
 });
 $('#modal').addEventListener('mousedown',e=>{ if(e.target.id==='modal') fecharModal(); });
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#modal').hidden) fecharModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('#modal').hidden&&!window.MeuEixoSelecao?.aberto()) fecharModal(); });
 /* dica flutuante dos gráficos (mouse e toque) */
 const tipEl=(()=>{ const t=document.createElement('div'); t.className='tip'; t.hidden=true; document.body.appendChild(t); return t; })();
 function mostrarTip(e){ const el=e.target.closest && e.target.closest('[data-tip]'); if(!el){ tipEl.hidden=true; return; }
@@ -2728,8 +2728,8 @@ document.addEventListener('change', async e=>{
   if(t.id==='espacoSel'){ fecharMenu(); try{ await abrirEspaco(t.value); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='entradaD'){ try{ await atualizar('despesas',t.dataset.id,{entradaId:t.value||null}); toast(t.value?'Conta ligada a essa entrada.':'Conta volta a seguir a data de vencimento.'); }catch(x){ dbErr(x); } return; }
   if(t.dataset.chg==='entradaR'){ try{ await atualizar('receitas',t.dataset.id,{entradaId:t.value||null}); toast(t.value?'Receita ligada à entrada.':'Receita marcada como eventual.'); }catch(x){ dbErr(x); } return; }
-  if(t.dataset.chg==='fsit'){ S.filtro.sit=t.value; render(); }
-  else if(t.dataset.chg==='fcat'){ S.filtro.cat=t.value; render(); }
+  if(t.dataset.chg==='fsit'){ S.filtro.sit=[...t.selectedOptions].map(o=>o.value); render(); }
+  else if(t.dataset.chg==='fcat'){ S.filtro.cat=[...t.selectedOptions].map(o=>o.value); render(); }
   else if(t.dataset.orc){ const v=t.value.trim()===''?0:parseValor(t.value); if(isNaN(v)||v<0){ toast('Valor de orçamento inválido.'); return; }
     const lim={...orcamentoMes(S.mes)}; if(v) lim[t.dataset.orc]=r2(v); else delete lim[t.dataset.orc];
     try{ await salvarOrc(S.mes,lim); toast('Orçamento atualizado.'); }catch(x){ dbErr(x); } }

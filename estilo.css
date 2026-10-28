@@ -700,33 +700,23 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 .dd-pop.multi .dd-op.todas.on .dd-marca,.dd-pop.multi .dd-op.todas.parcial .dd-marca{background:var(--blue);border-color:var(--blue);color:var(--on-blue)}
 .dd-traco{display:block;width:9px;height:2px;border-radius:2px;background:var(--on-blue)}
 
-/* ---------- menu lateral recolhível (computador e iPad deitado) ----------
-   Recolhido: só ícones (72px) e o conteúdo usa o resto da tela.
-   Com o mouse em cima (ou pelo teclado) ele se abre por cima do conteúdo.
-   Em telas de toque sem mouse, o botão ☰ do topo abre e fecha. */
-@media (min-width:901px){
-  .app,body .app{display:block}
-  main{margin-left:72px;min-height:100vh}
-  .side{position:fixed;left:0;top:0;bottom:0;width:72px;height:100vh;z-index:40;padding:20px 12px;overflow-x:hidden;overflow-y:auto;transition:width .22s cubic-bezier(.2,.7,.3,1),box-shadow .22s ease;border-right:1px solid var(--line);background:var(--bg)}
-  .side:hover,.side.open,.side:has(:focus-visible){width:264px;box-shadow:0 0 0 1px var(--line),0 18px 50px rgba(23,33,43,.14)}
-  .side .brand{margin:-10px -6px 0;width:auto;padding:8px 6px}
-  .side .brand-txt,.side .brand-edit,.side .nav-label,.side .nav button span,.side .space-pick,.side .who span,.side .who .btn{transition:opacity .16s ease;white-space:nowrap}
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .brand-txt,
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .brand-edit,
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .nav-label,
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .nav button span,
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .space-pick,
-  .side:not(:hover):not(.open):not(:has(:focus-visible)) .who{opacity:0;pointer-events:none}
-  .side .nav button{padding:10px 13px;white-space:nowrap}
-  .side .nav svg{width:20px;height:20px}
-  .side .brand .avatar{width:44px;height:44px}
-  .top{padding-left:32px}
-  body.locked main{margin-left:0}
-  .scrim:not([hidden]){display:block;position:fixed;inset:0;z-index:30;background:rgba(14,20,26,.18)}
-}
-@media (min-width:901px) and (hover:none){ .icon-btn.menu-btn{display:grid} .side:hover:not(.open){width:72px;box-shadow:none} }
-@media (min-width:1600px){ main{margin-left:80px} .side{width:80px} .side:hover,.side.open,.side:has(:focus-visible){width:280px} }
-@media (prefers-reduced-motion:reduce){ .side{transition:none} }
-@media (min-width:901px){ .side .brand-txt{min-width:176px;white-space:normal} .side .brand-txt b,.side .brand-txt .brand-eyebrow{white-space:nowrap} .side .nav-label,.side .nav button span{white-space:nowrap} }
 @media (min-width:601px){ .kpis > .kpi:last-child{grid-column:auto} }
 @media (min-width:601px) and (max-width:1399px){ .kpis:has(> .kpi:nth-child(5):last-child) > .kpi:last-child{grid-column:span 2} }
+
+/* ---------- menu lateral escondido: aparece ao levar o mouse à borda esquerda ----------
+   Computador e iPad: o conteúdo usa a tela toda. O menu desliza por cima do conteúdo
+   quando o mouse encosta na borda esquerda (ou pelo botão ☰) e some ao sair. */
+.borda-menu{display:none}
+@media (min-width:901px){
+  .app,body .app{display:block}
+  main{margin-left:0;min-height:100vh}
+  .borda-menu{display:block;position:fixed;left:0;top:0;bottom:0;width:14px;z-index:41}
+  .side{position:fixed;left:0;top:0;bottom:0;width:264px;height:100vh;z-index:42;padding:22px 14px;overflow-y:auto;background:var(--bg);border-right:1px solid var(--line);
+    transform:translateX(-100%);visibility:hidden;transition:transform .24s cubic-bezier(.2,.7,.3,1),visibility 0s linear .24s,box-shadow .24s ease}
+  .borda-menu:hover + .side,.side:hover,.side.open,.side:focus-within{transform:none;visibility:visible;transition:transform .24s cubic-bezier(.2,.7,.3,1),visibility 0s,box-shadow .24s ease;box-shadow:0 18px 50px rgba(23,33,43,.16)}
+  .icon-btn.menu-btn{display:grid}
+  .top{padding-left:20px}
+  .scrim:not([hidden]){display:block;position:fixed;inset:0;z-index:40;background:rgba(14,20,26,.18)}
+  body.locked .borda-menu{display:none}
+}
+@media (prefers-reduced-motion:reduce){ .side{transition:none!important} }

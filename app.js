@@ -303,7 +303,7 @@ function rowDesp(d,o={}){
   if((s==='paga'||noCartao) && !o.mover && temContas() && valorLiq(d)>0) ops.push(`<button class="btn sm ghost" data-act="estornar" data-id="${d.id}" title="Registrar estorno">Estorno</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
   if(!o.mover) ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir">${icon(I.trash)}</button>`);
-  const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
+  const parc = grupo ? `<span class="pill parc">Parcela ${d.parcelaAtual} de ${d.parcelas}</span>${d.grupoParcela&&grupoQuitado(d.grupoParcela)?'<span class="pill quitado">Quitado</span>':''}` : (d.recorrenciaId?'<span class="pill">Todo mês</span>':(d.comportamento==='fixa'?'<span class="pill">Fixa</span>':''));
   const falta = grupo ? Math.max(0,(+d.parcelas)-(+d.parcelaAtual)) : 0;
   const restante = grupo ? `<span>${falta===0?'última parcela':`faltam ${falta} depois desta`}</span>` : '';
   return `<div class="row"><div><div class="t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div><div class="meta"><span>${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</span>${noCartao?`${d.dataCompra?`<span>compra ${dataCurta(d.dataCompra)}</span>`:''}<span class="pill crt">${esc(cartaoById(d.cartaoId).nome)} · fatura ${esc(mesCurto(compDesp(d)))}</span>${s==='paga'?pillD(d):''}`:`<span>${s==='paga'&&d.dataPagamento?'paga em '+dataCurta(d.dataPagamento):'vence '+dataCurta(d.vencimento)}</span>${pillD(d)}`}${parc}${restante}${o.mover?'':pillE(d.entradaId)}${d.formaPagamento&&!noCartao?`<span>${esc(d.formaPagamento)}</span>`:''}${!noCartao&&contasAtivas().length>1&&contaDe(d)?`<span>${esc(contaNome(contaDe(d)))}</span>`:''}${valorEstornado(d.id)?`<span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span>`:''}</div></div><div class="v ${s==='cancelada'?'muted':''}">${money(d.valor)}</div><div class="ops">${ops.join('')}</div></div>`;
@@ -1023,11 +1023,11 @@ const acoesMetas = {
       <div class="form-grid"><div class="field"><label for="pgV">Valor pago (R$)</label><input id="pgV" name="v" inputmode="decimal" required value="${fmtInput(pend?.valor||Math.min(+dv.parcela||s,s))}"></div><div class="field"><label for="pgD">Pago em</label><input id="pgD" name="d" type="date" required value="${hoje()}"></div>
       <div class="field"><label for="pgF">Forma de pagamento</label><select id="pgF" name="forma">${opts(FORMAS.map(x=>[x,x]),pend?.formaPagamento||dv.formaPagamento||'Pix')}</select></div></div>
       <p class="note">${pend?'O lançamento pendente de Lançamentos será marcado como pago.':'Vira uma despesa paga em “Dívidas e parcelas” em Lançamentos, ligada a esta dívida.'}</p>${rodape('Registrar pagamento')}</form>`,
-    async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value, forma=f.elements.forma.value; if(!(v>0)) return 'Informe o valor pago.';
+    async f=>{ const v=parseValor(f.elements.v.value), d=f.elements.d.value, forma=f.elements.forma.value; if(!(v>0)) return 'Informe o valor pago.'; const antes=fotoQuitacao();
       if(pend) await atualizar('despesas',pend.id,{situacao:'paga',valor:r2(v),dataPagamento:d,formaPagamento:forma});
       else await inserir('despesas',{descricao:'Pagamento · '+dv.nome,valor:r2(v),categoria:catDividas(),comportamento:'fixa',formaPagamento:forma,vencimento:d,dataPagamento:d,situacao:'paga',...comEntrada(dv.entradaId),parcelas:1,dividaId:dv.id,chavePix:dv.chavePix||''});
       const resta=saldoDiv(dv);
-      if(resta<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:d}); toast('Pagamento registrado. Dívida quitada!'); } else toast(`Pagamento registrado. Saldo estimado: ${money(resta)}.`); }); },
+      if(resta<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:d}); celebrarSeQuitou(antes); toast('Pagamento registrado. Dívida quitada!'); } else toast(`Pagamento registrado. Saldo estimado: ${money(resta)}.`); }); },
   delDivida: el => { const dv=S.dividas.find(x=>x.id===el.dataset.id); if(!dv) return; const n=S.desp.filter(x=>x.dividaId===dv.id).length;
     confirmar('Excluir dívida',`Excluir “${esc(dv.nome)}”?${n?` Os ${n} lançamentos de pagamento continuam em Lançamentos.`:''} Se ela foi paga, prefira “Atualizar saldo” com zero para guardar o histórico.`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('dividas').delete().eq('id',dv.id).eq('espaco_id',S.esp)); await carregarMetas(); await recarregar('despesas'); toast('Dívida excluída.'); }}]); },
   reabrirDivida: async el => { await gravarDivida(el.dataset.id,{quitada:false,quitadaEm:null}); toast('Dívida reaberta.'); },
@@ -1407,9 +1407,9 @@ const acoesCartoes = {
     abrirModal(`<form data-form="quick">${head('Pagar fatura')}<p class="muted" style="margin:0">${esc(c.nome)} · fatura de ${mesLabel(f.fat)} · vence ${dataBR(f.venc)}</p>
       <div class="form-grid"><div class="field"><label for="pfV">Valor pago (R$)</label><input id="pfV" name="v" inputmode="decimal" required value="${fmtInput(f.resta)}"></div><div class="field"><label for="pfD">Pago em</label><input id="pfD" name="d" type="date" required value="${hoje()}"></div>${campoConta(c.contaPagamento,'Sai da conta')}</div>
       <p class="note">Falta pagar ${money(f.resta)}. O pagamento sai da conta escolhida e não vira uma despesa nova: as compras da fatura já estão contadas.${f.resta>0?' Pagamento parcial também pode ser registrado.':''}</p>${rodape('Registrar pagamento')}</form>`,
-    async fm=>{ const v=parseValor(fm.elements.v.value), d=fm.elements.d.value; if(!(v>0)) return 'Informe o valor pago.';
+    async fm=>{ const v=parseValor(fm.elements.v.value), d=fm.elements.d.value; if(!(v>0)) return 'Informe o valor pago.'; const antes=fotoQuitacao();
       chk(await sb.from('pagamentos_fatura').insert({...toDb({cartaoId:c.id,fatura:f.fat,valor:r2(v),data:d,contaId:fm.elements.contaId?.value||null}),espaco_id:S.esp}));
-      await carregarCartoes(); await sincronizarFatura(c,f.fat); const nf=fatura(c,f.fat);
+      await carregarCartoes(); await sincronizarFatura(c,f.fat); const nf=fatura(c,f.fat); celebrarSeQuitou(antes);
       toast(nf.resta<=0.009?'Fatura paga. As compras foram marcadas como pagas.':`Pagamento registrado. Falta ${money(nf.resta)}.`); }); },
   delPagFatura: el => { const p=(S.pagFat||[]).find(x=>x.id===el.dataset.id); if(!p) return; const c=cartaoById(p.cartaoId);
     confirmar('Excluir pagamento',`Excluir o pagamento de ${money(p.valor)} em ${dataBR(p.data)}?`,[{t:'Excluir',fn:async()=>{ chk(await sb.from('pagamentos_fatura').delete().eq('id',p.id).eq('espaco_id',S.esp)); await carregarCartoes(); if(c) await sincronizarFatura(c,p.fatura,true); toast('Pagamento excluído.'); }}]); },
@@ -1739,6 +1739,42 @@ function vCiclosPlanejamento(ym){
 }
 
 const segEscopo = (v='este') => `<div class="seg" data-escopo><button type="button" aria-pressed="${v==='este'}" data-act="escopo" data-v="este">Só este mês</button><button type="button" aria-pressed="${v==='proximos'}" data-act="escopo" data-v="proximos">Este e os próximos</button></div><input type="hidden" name="escopo" value="${v}">`;
+/* ---------- microcelebração: dívida ou compra parcelada totalmente quitada ----------
+   Só depois do pagamento confirmado no banco. Só quando o grupo de parcelas (com a última
+   parcela) fica todo pago, ou quando a dívida passa a quitada. Nunca em parcelas intermediárias. */
+const gruposAbertos = () => new Set(S.desp.filter(d=>ativa(d)&&(+d.parcelas||1)>1&&d.grupoParcela&&d.situacao!=='paga').map(d=>d.grupoParcela));
+const dividasAbertas = () => new Set((S.dividas||[]).filter(d=>!d.quitada).map(d=>d.id));
+const fotoQuitacao = () => ({g:gruposAbertos(), d:dividasAbertas()});
+const parcelasDoGrupo = g => S.desp.filter(d=>d.grupoParcela===g && ativa(d));
+const grupoQuitado = g => { const P=parcelasDoGrupo(g); return P.length>0 && P.every(d=>d.situacao==='paga') && P.some(d=>+d.parcelaAtual===+d.parcelas); };
+function celebrarSeQuitou(antes){
+  if(!antes) return false; const g=gruposAbertos(), dv=dividasAbertas();
+  const q=[...antes.g].some(x=>!g.has(x) && grupoQuitado(x)) || [...antes.d].some(id=>!dv.has(id) && (S.dividas||[]).find(x=>x.id===id)?.quitada);
+  if(q) setTimeout(microCelebracao,80); return q;
+}
+function microCelebracao(){
+  const reduz = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cam=document.createElement('div'); cam.className='celebra'; cam.setAttribute('aria-hidden','true');
+  const txt=document.createElement('div'); txt.className='celebra-txt'; txt.textContent='Quitado!'; cam.appendChild(txt);
+  const viva=document.createElement('div'); viva.className='sr-only'; viva.setAttribute('role','status'); viva.textContent='Quitado!';
+  document.body.appendChild(cam); document.body.appendChild(viva);
+  const css=getComputedStyle(document.documentElement), cores=[css.getPropertyValue('--blue'),css.getPropertyValue('--sage'),css.getPropertyValue('--c-desp'),css.getPropertyValue('--muted')].map(x=>x.trim()).filter(Boolean);
+  txt.animate([{opacity:0,transform:'translate(-50%,-50%) translateY(6px) scale(.97)'},{opacity:1,transform:'translate(-50%,-50%) translateY(0) scale(1)',offset:.14},{opacity:1,transform:'translate(-50%,-50%) translateY(0) scale(1)',offset:.8},{opacity:0,transform:'translate(-50%,-50%) translateY(-4px) scale(1)'}],{duration:reduz?1500:1650,easing:'ease-out',fill:'forwards'});
+  if(!reduz){
+    const N=16;
+    for(let i=0;i<N;i++){
+      const c=document.createElement('i'); c.className='confete'+(i%3===0?' redondo':''); c.style.background=cores[i%cores.length]; cam.appendChild(c);
+      const ang=(-150+ (i/(N-1))*120 + (Math.random()*14-7))*Math.PI/180, dist=70+Math.random()*80;
+      const dx=Math.cos(ang)*dist, dy=Math.sin(ang)*dist*0.7, cai=60+Math.random()*50, rot=(Math.random()*240-120)|0;
+      c.animate([{transform:'translate(-50%,-50%) translate(0,0) rotate(0deg)',opacity:0},{opacity:1,offset:.12},
+        {transform:`translate(-50%,-50%) translate(${dx.toFixed(0)}px,${dy.toFixed(0)}px) rotate(${rot/2}deg)`,opacity:1,offset:.45},
+        {transform:`translate(-50%,-50%) translate(${(dx*1.15).toFixed(0)}px,${(dy+cai).toFixed(0)}px) rotate(${rot}deg)`,opacity:0}],
+        {duration:1100+Math.random()*300,delay:Math.random()*90,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+    }
+  }
+  setTimeout(()=>{ cam.remove(); viva.remove(); },1900);
+}
+
 /* ---------- ações ---------- */
 const acoes = {
   escopo: el => { const f=el.closest('form'); f.elements.escopo.value=el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); },
@@ -1760,8 +1796,10 @@ const acoes = {
       ${d.pixCopiaCola||d.chavePix?`<div class="pix-box"><div><span class="small muted">Chave Pix salva</span><b>${esc(d.chavePix||'Pix copia e cola')}</b></div><button type="button" class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}">${icon(I.copy)}Copiar</button></div>`:''}
       ${blocoAnexo(d,'Anexe o comprovante do pagamento. Eu confiro o valor e a data para você.')}
       <div class="form-grid"><div class="field"><label for="qV">Valor pago (R$)</label><input id="qV" name="v" inputmode="decimal" required value="${fmtInput(d.valor)}"></div><div class="field"><label for="qD">Pago em</label><input id="qD" name="d" type="date" required value="${hoje()}"></div></div>${rodape('Confirmar pagamento','sage')}</form>`,
-    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o valor pago.'; const arq=await enviarArquivo();
-      await atualizar('despesas',d.id,{situacao:'paga',valor:r2(v),dataPagamento:f.elements.d.value,...(arq||{})}); if(arq&&d.comprovante) apagarArquivos([d.comprovante]); toast('Pagamento registrado.'); }); },
+    async f=>{ const v=parseValor(f.elements.v.value); if(!(v>0)) return 'Informe o valor pago.'; const antes=fotoQuitacao(); const arq=await enviarArquivo();
+      await atualizar('despesas',d.id,{situacao:'paga',valor:r2(v),dataPagamento:f.elements.d.value,...(arq||{})}); if(arq&&d.comprovante) apagarArquivos([d.comprovante]);
+      if(d.dividaId && typeof carregarMetas==='function'){ const dv=(S.dividas||[]).find(x=>x.id===d.dividaId); if(dv && !dv.quitada && saldoDiv(dv)<=0.01){ await gravarDivida(dv.id,{quitada:true,quitadaEm:f.elements.d.value}); } }
+      const q=celebrarSeQuitou(antes); toast(q?'Pagamento registrado. Tudo quitado!':'Pagamento registrado.'); }); },
   receber: el => { const r=S.rec.find(x=>x.id===el.dataset.id); if(!r) return;
     abrirModal(`<form data-form="quick" data-ref="${r.id}">${head('Registrar recebimento')}<p class="muted" style="margin:0">${esc(r.descricao)} · previsto ${money(r.valorPrevisto)} em ${dataBR(r.dataPrevista)}</p>
       ${blocoAnexo(r,'Anexe o comprovante do recebimento, se tiver.')}
@@ -2531,8 +2569,8 @@ async function subir(file, hash){ if(!file) return {}; anexo={file,hash}; const 
 const periodoDaData = () => '';   // os dias 10/20 deixaram de ser regra: a entrada vem da configuração de ciclos
 async function executarAuto(dec, r, file, hash){
   const data=r.data||hoje(), arq=await subir(file,hash), nome=r.nome||'';
-  if(dec.acao==='pagar'){ const x=dec.alvo, antes={situacao:x.situacao,valor:x.valor,dataPagamento:x.dataPagamento||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
-    await atualizar('despesas',x.id,{situacao:'paga',valor:r2(r.valor),dataPagamento:data,conferido:false,favorecido:x.favorecido||nome,chavePix:x.chavePix||r.chave||'',formaPagamento:x.formaPagamento||(r.pix?'Pix':''),...arq});
+  if(dec.acao==='pagar'){ const fq=fotoQuitacao(), x=dec.alvo, antes={situacao:x.situacao,valor:x.valor,dataPagamento:x.dataPagamento||'',comprovante:x.comprovante||null,comprovanteHash:x.comprovanteHash||null,conferido:true};
+    await atualizar('despesas',x.id,{situacao:'paga',valor:r2(r.valor),dataPagamento:data,conferido:false,favorecido:x.favorecido||nome,chavePix:x.chavePix||r.chave||'',formaPagamento:x.formaPagamento||(r.pix?'Pix':''),...arq}); celebrarSeQuitou(fq);
     const parc=(+x.parcelas||1)>1?` (parcela ${x.parcelaAtual} de ${x.parcelas})`:'';
     return {tipo:'ok',txt:`Pago: ${x.descricao}${parc} · ${money(r.valor)}`,motivo:dec.motivo,desfazer:{t:'despesas',id:x.id,patch:antes}}; }
   if(dec.acao==='recorrencia'){ const t=dec.modelo, ym=data.slice(0,7), [Y,M]=ym.split('-').map(Number), last=new Date(Y,M,0).getDate();

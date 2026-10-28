@@ -226,7 +226,7 @@ function saudacao(){ const h=+new Intl.DateTimeFormat('pt-BR',{timeZone:'America
 const dataExtenso = () => { const t=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Cuiaba',weekday:'long',day:'numeric',month:'long'}).format(new Date()); return t.charAt(0).toUpperCase()+t.slice(1); };
 
 function renderNav(){
-  $('#nav').innerHTML = `<div class="nav-label">Navegação</div>` + NAV.map(n=>`<button data-act="ir" data-v="${n.id}" ${S.view===n.id?'aria-current="page"':''}>${icon(n.ic)}<span>${n.t}</span>${n.soon?`<span class="soon">Etapa ${n.soon}</span>`:''}</button>`).join('');
+  $('#nav').innerHTML = `<div class="nav-label">Navegação</div>` + NAV.map(n=>`<button data-act="ir" data-v="${n.id}" title="${n.t}" ${S.view===n.id?'aria-current="page"':''}>${icon(n.ic)}<span>${n.t}</span>${n.soon?`<span class="soon">Etapa ${n.soon}</span>`:''}</button>`).join('');
   $('#espacoSel').innerHTML = S.espacos.map(e=>`<option value="${e.id}" ${e.id===S.esp?'selected':''}>${esc(e.nome)}${e.tipo==='compartilhado'?' · compartilhado':''}</option>`).join('');
   $('#quem').textContent = S.perfil?.nome || S.user?.email || '';
   const nome=meuNome(), ini=iniciais(nome);

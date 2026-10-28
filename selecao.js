@@ -41,19 +41,24 @@ function opcoesDe(sel){ return [...sel.options].filter(o=>!o.hidden).map((o,i)=>
 function abrir(b){
   if(b.disabled) return; fechar(false);
   const sel=b._sel, multi=sel.multiple, ops=opcoesDe(sel), escolha=new Set([...sel.selectedOptions].map(o=>o.value));
+  if(multi && !escolha.size) ops.filter(x=>!x.dis).forEach(x=>escolha.add(x.v));   // sem filtro = todas marcadas
   const pop=document.createElement('div'); pop.className='dd-pop'+(multi?' multi':''); pop.setAttribute('role','listbox'); if(multi) pop.setAttribute('aria-multiselectable','true');
   const titulo = (b.getAttribute('aria-labelledby')||'').split(' ').map(id=>document.getElementById(id)).filter(x=>x && x!==b).map(x=>x.textContent).join(' ') || sel.getAttribute('aria-label') || '';
   const busca = ops.length>9;
   pop.innerHTML = `${titulo?`<div class="dd-tit">${esc(titulo)}</div>`:''}${busca?`<div class="dd-busca"><input type="search" placeholder="Buscar" aria-label="Buscar opção" autocomplete="off"></div>`:''}<div class="dd-lista"></div>${multi?`<div class="dd-rod"><button type="button" class="dd-limpar">Limpar</button><button type="button" class="dd-aplicar">Aplicar</button></div>`:''}`;
   const lista=pop.querySelector('.dd-lista');
   const desenhar = filtro => { const f=(filtro||'').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
-    lista.innerHTML = ops.filter(x=>!f || x.t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'').includes(f)).map(x=>{ const on=multi?escolha.has(x.v):x.o.selected;
+    const validas=ops.filter(x=>!x.dis), todas=validas.length>0 && validas.every(x=>escolha.has(x.v)), parcial=!todas && escolha.size>0;
+    const linhaTodas = multi && !f ? `<div class="dd-op todas${todas?' on':''}${parcial?' parcial':''}" role="option" aria-selected="${todas}" data-i="todas" id="${b.id}-todas"><span class="dd-marca">${parcial?'<i class="dd-traco"></i>':OK}</span><span class="dd-t">${esc(sel.dataset.vazio||'Todas')}</span></div>` : '';
+    lista.innerHTML = linhaTodas + ops.filter(x=>!f || x.t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'').includes(f)).map(x=>{ const on=multi?escolha.has(x.v):x.o.selected;
       return `<div class="dd-op${on?' on':''}${x.dis?' dis':''}${!x.v&&!multi?' neutra':''}" role="option" aria-selected="${on}" data-i="${x.i}" id="${b.id}-o${x.i}"><span class="dd-marca">${on||multi?OK:''}</span><span class="dd-t">${esc(x.t)}</span></div>`; }).join('') || '<div class="dd-nada">Nada encontrado</div>';
     ativar(lista.querySelector('.dd-op.on')||lista.querySelector('.dd-op:not(.dis)')); };
   let ativo=null;
   const ativar = el => { if(ativo) ativo.classList.remove('ativo'); ativo=el; if(el){ el.classList.add('ativo'); b.setAttribute('aria-activedescendant',el.id); const t=el.offsetTop, h=el.offsetHeight; if(t<lista.scrollTop) lista.scrollTop=t; else if(t+h>lista.scrollTop+lista.clientHeight) lista.scrollTop=t+h-lista.clientHeight; } };
-  const escolher = el => { if(!el || el.classList.contains('dis')) return; const x=ops.find(o=>o.i===+el.dataset.i);
-    if(multi){ escolha.has(x.v)?escolha.delete(x.v):escolha.add(x.v); el.classList.toggle('on'); el.setAttribute('aria-selected',String(escolha.has(x.v))); return; }
+  const escolher = el => { if(!el || el.classList.contains('dis')) return;
+    if(el.dataset.i==='todas'){ const validas=ops.filter(x=>!x.dis); const todas=validas.every(x=>escolha.has(x.v)); escolha.clear(); if(!todas) validas.forEach(x=>escolha.add(x.v)); desenhar(''); ativar(lista.querySelector('.dd-op.todas')); return; }
+    const x=ops.find(o=>o.i===+el.dataset.i);
+    if(multi){ escolha.has(x.v)?escolha.delete(x.v):escolha.add(x.v); const q=pop.querySelector('.dd-busca input')?.value||''; const i=el.dataset.i; desenhar(q); ativar(lista.querySelector(`[data-i="${i}"]`)); return; }
     if(sel.value!==x.v){ sel.value=x.v; sel.dispatchEvent(new Event('change',{bubbles:true})); }
     fechar(true); refrescar(); };
   lista.addEventListener('pointerdown',e=>e.preventDefault());
@@ -61,7 +66,7 @@ function abrir(b){
   lista.addEventListener('pointermove',e=>{ const el=e.target.closest('.dd-op'); if(el && el!==ativo && !el.classList.contains('dis')) ativar(el); });
   if(multi){
     pop.querySelector('.dd-limpar').addEventListener('click',()=>{ escolha.clear(); desenhar(pop.querySelector('.dd-busca input')?.value); });
-    pop.querySelector('.dd-aplicar').addEventListener('click',()=>{ [...sel.options].forEach(o=>o.selected=escolha.has(o.value)); fechar(true); refrescar(); sel.dispatchEvent(new Event('change',{bubbles:true})); });
+    pop.querySelector('.dd-aplicar').addEventListener('click',()=>{ const validas=ops.filter(x=>!x.dis); if(validas.length && validas.every(x=>escolha.has(x.v))) escolha.clear(); [...sel.options].forEach(o=>o.selected=escolha.has(o.value)); fechar(true); refrescar(); sel.dispatchEvent(new Event('change',{bubbles:true})); });
   }
   pop.addEventListener('keydown',e=>{
     const itens=[...lista.querySelectorAll('.dd-op:not(.dis)')], k=itens.indexOf(ativo);

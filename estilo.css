@@ -695,3 +695,7 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 .dd-pop.folha .dd-tit{display:block;padding:8px 12px 10px;font-weight:600;font-size:15px;color:var(--fg);border-bottom:1px solid var(--line);margin-bottom:6px}
 .dd-pop.folha .dd-op{padding:13px 12px;font-size:16px}
 @media (prefers-reduced-motion:reduce){ .dd-pop,.dd .dd-chev{transition:none} }
+
+.dd-op.todas{font-weight:600;border-bottom:1px solid var(--line);border-radius:9px 9px 0 0;margin-bottom:4px;padding-bottom:12px}
+.dd-pop.multi .dd-op.todas.on .dd-marca,.dd-pop.multi .dd-op.todas.parcial .dd-marca{background:var(--blue);border-color:var(--blue);color:var(--on-blue)}
+.dd-traco{display:block;width:9px;height:2px;border-radius:2px;background:var(--on-blue)}

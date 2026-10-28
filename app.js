@@ -163,7 +163,8 @@ const pendentes=new Set(); let tRecarga=null;
 function recarregarDepois(t){ pendentes.add(t); clearTimeout(tRecarga); tRecarga=setTimeout(async()=>{ const ts=[...pendentes]; pendentes.clear(); try{ for(const x of ts) await recarregar(x); }catch(e){ console.error(e); } },400); }
 
 async function inserir(t,rows){ const arr=(Array.isArray(rows)?rows:[rows]).map(r=>({...toDb(r),espaco_id:S.esp})); const data=chk(await sb.from(t).insert(arr).select('id')); await recarregar(t); return data?.[0]?.id; }
-async function atualizar(t,id,patch){ chk(await sb.from(t).update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp)); await recarregar(t); }
+async function atualizar(t,id,patch){ const foto = t==='despesas' && patch.situacao==='paga' ? fotoQuitacao() : null;   // qualquer caminho que marque como pago (botão, edição, Planejamento)
+  chk(await sb.from(t).update(toDb(patch)).eq('id',id).eq('espaco_id',S.esp)); await recarregar(t); if(foto) celebrarSeQuitou(foto); }
 async function remover(t,ids){ ids=Array.isArray(ids)?ids:[ids]; chk(await sb.from(t).delete().in('id',ids).eq('espaco_id',S.esp)); await recarregar(t); }
 async function salvarOrc(mes,limites){ chk(await sb.from('orcamentos').upsert({espaco_id:S.esp,mes,limites},{onConflict:'espaco_id,mes'})); await recarregar('orcamentos'); }
 async function salvarCfg(p){ chk(await sb.from('configuracoes').upsert({espaco_id:S.esp,...toDb(p)},{onConflict:'espaco_id'})); await recarregar('configuracoes'); }
@@ -653,6 +654,7 @@ async function editarDespesa(f,fd,base,valor){
   }
   const A=parseInt(fd.parcelaAtual)||d.parcelaAtual, N=parseInt(fd.totalParcelas)||d.parcelas;
   if(N<2) return 'O total de parcelas precisa ser 2 ou mais.';
+  const fotoQ = base.situacao==='paga' && d.situacao!=='paga' ? fotoQuitacao() : null;
   if(A<1||A>N) return `A parcela precisa estar entre 1 e ${N}.`;
   const ups=[{id, dados:{...base,valor:r2(valor),vencimento:fd.vencimento,parcelaAtual:A,parcelas:N,atualizadoEm:agora,...(arq||{})}}];
   const apagar=[], criar=[];
@@ -673,7 +675,7 @@ async function editarDespesa(f,fd,base,valor){
   if(apagar.length){ chk(await sb.from('despesas').delete().in('id',apagar.map(x=>x.id)).eq('espaco_id',S.esp)); apagarArquivos(apagar.map(x=>x.comprovante)); }
   if(criar.length) chk(await sb.from('despesas').insert(criar.map(r=>({...toDb(r),espaco_id:S.esp}))));
   if(arq && d.comprovante) apagarArquivos([d.comprovante]);
-  await recarregar('despesas');
+  await recarregar('despesas'); if(fotoQ) celebrarSeQuitou(fotoQ);
   toast(fd.aplicarProximas ? `Parcelamento ajustado: parcela ${A} de ${N}${apagar.length?`, ${apagar.length} excluída${apagar.length>1?'s':''}`:''}${criar.length?`, ${criar.length} criada${criar.length>1?'s':''}`:''}.` : 'Parcela atualizada.');
 }
 
@@ -1753,6 +1755,7 @@ function celebrarSeQuitou(antes){
   if(q) setTimeout(microCelebracao,80); return q;
 }
 function microCelebracao(){
+  if(microCelebracao.em && Date.now()-microCelebracao.em<2500) return; microCelebracao.em=Date.now();
   const reduz = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const cam=document.createElement('div'); cam.className='celebra'; cam.setAttribute('aria-hidden','true');
   const txt=document.createElement('div'); txt.className='celebra-txt'; txt.textContent='Quitado!'; cam.appendChild(txt);

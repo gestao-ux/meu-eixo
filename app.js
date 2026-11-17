@@ -1609,15 +1609,13 @@ function vInicio(){
     <div class="h2-calc">${rc?`<span>Início do ciclo ${money(rc.saldoIni)}</span><span>+ ${money(rc.entradas)} entradas</span><span>− ${money(rc.pagos)} pagos</span>${Math.abs(rc.outros)>=0.01?`<span>${rc.outros>0?'+':'−'} ${money(Math.abs(rc.outros))} outros movimentos</span>`:''}<span>= ${money(dp.saldo)} hoje</span>`:`<span>${money(dp.saldo)} em conta</span>`}<span>− ${money(dp.c.contas)} em ${dp.c.D.length} ${dp.c.D.length===1?'conta':'contas'} até ${dataCurta(dp.lim)}</span>${dp.c.F.length?`<span>− ${money(dp.c.faturas)} em ${dp.c.F.length===1?'fatura':'faturas'}</span>`:''}${dp.entraEv?`<span>+ ${money(dp.entraEv)} entradas eventuais previstas</span>`:''}<span>= <b>${money(dp.livre)}</b> disponível</span></div>
   </section>`; })():''}
   <section><div class="section-head"><h2>${ym===atual?'Este mês':mesLabel(ym)}</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
-    <div class="kpis">
-      <div class="kpi destaque"><span class="lbl">Receitas do mês</span><span class="val ${rs.recEsp-rs.despPaga<0?'neg':'pos'}">${money(r2(rs.recEsp-rs.despPaga))}</span></div>
-      <div class="kpi destaque"><span class="lbl">Total despesas</span><span class="val">${money(rs.despTot)}</span></div>
-      <div class="kpi destaque"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span></div>
-      <div class="kpi destaque"><span class="lbl">Despesas pendentes</span><span class="val">${money(r2(rs.despTot-rs.despPaga))}</span></div>
-      <div class="kpi"><span class="lbl">Contas vencidas</span><span class="val ${venc.length||fVenc.length?'neg':''}">${money(r2(sum(venc,valorLiq)+fVenc.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${venc.length+fVenc.length?`${venc.length+fVenc.length} ${venc.length+fVenc.length>1?'itens':'item'} sem pagamento`:'nenhuma'}</span></div>
-      ${temCartoes()&&cartoesAtivos().length?`<div class="kpi"><span class="lbl">Faturas em aberto</span><span class="val">${money(r2(fAbertas.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${fAbertas.length?(f0=>f0.venc<h?`vencida desde ${dataCurta(f0.venc)}`:`próxima vence ${dataCurta(f0.venc)}`)([...fAbertas].sort((a,b)=>a.venc.localeCompare(b.venc))[0]):'nada a pagar'}</span></div>`:''}
-      <div class="kpi"><span class="lbl">Comprometido até ${dataCurta(fimMes(atual))}</span><span class="val">${money(comp.total)}</span><span class="sub">contas e faturas ainda a pagar</span></div>
-      <div class="kpi"><span class="lbl">Próxima entrada</span><span class="val pos">${pe?money(pe.valor):'—'}</span><span class="sub">${pe?`${dataCurta(pe.data)} · ${esc(pe.descricao)}`:'nenhuma receita prevista'}</span></div>
+    <div class="kpis seis">
+      <div class="kpi"><span class="lbl">Receita total</span><span class="val pos">${money(rs.recEsp)}</span></div>
+      <div class="kpi"><span class="lbl">Despesa total</span><span class="val">${money(rs.despTot)}</span></div>
+      <div class="kpi"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span></div>
+      <div class="kpi"><span class="lbl">Despesas pendentes</span><span class="val">${money(r2(rs.despTot-rs.despPaga))}</span></div>
+      <div class="kpi"><span class="lbl">Sobra</span><span class="val ${rs.saldoReal<0?'neg':'pos'}">${money(rs.saldoReal)}</span></div>
+      <div class="kpi"><span class="lbl">Entradas pendentes</span><span class="val">${money(r2(rs.recEsp-rs.recReal))}</span></div>
     </div></section>
   <div class="grid2">
     <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas e faturas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>

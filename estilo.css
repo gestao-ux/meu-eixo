@@ -753,3 +753,10 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 .kc-ops .btn.sm{padding:4px 10px}
 @media (max-width:1199px){.quadro{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){.quadro{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:12px;margin:0 -16px;padding:0 16px 8px}.kcol{flex:0 0 86%;scroll-snap-align:start}}
+
+/* Início: 6 indicadores alinhados, mesmo tamanho */
+.kpis.seis{grid-template-columns:repeat(6,minmax(0,1fr))!important}
+.kpis.seis .kpi{padding:20px 22px;gap:8px}
+.kpis.seis .val{font-size:clamp(20px,1.75vw,30px);white-space:nowrap}
+@media (max-width:1099px){.kpis.seis{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media (max-width:700px){.kpis.seis{grid-template-columns:repeat(2,minmax(0,1fr))!important}.kpis.seis .kpi{padding:16px}.kpis.seis .val{font-size:21px}}

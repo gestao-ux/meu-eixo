@@ -401,8 +401,9 @@ function vFinanceiro(){
   ${faixaContas()}
   <div class="kpis">
     <div class="kpi"><span class="lbl">Receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} recebidos</span></div>
-    <div class="kpi"><span class="lbl">Despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${money(rs.despPaga)} pagos</span></div>
-    <div class="kpi"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">realizado até agora ${money(rs.saldoReal)}</span></div>
+    <div class="kpi"><span class="lbl">Total despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${rs.D.length} ${rs.D.length===1?'lançamento':'lançamentos'}</span></div>
+    <div class="kpi"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span><span class="sub">${rs.D.length-rs.pend.length} ${rs.D.length-rs.pend.length===1?'paga':'pagas'}</span></div>
+    <div class="kpi"><span class="lbl">Despesas pendentes</span><span class="val ${rs.pend.length?'':''}">${money(r2(rs.despTot-rs.despPaga))}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'pendente':'pendentes'}</span></div>
   </div>
   <section>
     ${isQ?`<div class="section-head"><p>Receitas e despesas de ${esc(mesLabel(ym))} em colunas. Ao marcar como pago ou recebido, o cartão muda de coluna.</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Novo lançamento</button></div></div>${vQuadro(ym)}`:isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`

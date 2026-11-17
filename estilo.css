@@ -727,7 +727,7 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 
 /* Quadro de lançamentos: colunas lado a lado (Receitas · A pagar · Pagas · Vencidas) */
 .quadro{display:grid;grid-template-columns:repeat(4,minmax(240px,1fr));gap:14px;align-items:start}
-.kcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-width:0;max-height:calc(100vh - 140px)}
+.kcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-width:0}
 .kcol-h{padding:14px 14px 10px}
 .kcol-tt{display:flex;align-items:center;gap:8px}
 .kcol-tt h3{font-family:var(--f-body);font-size:15px;font-weight:700;letter-spacing:0}
@@ -735,13 +735,13 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 .kcount{margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:0 9px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
 .kcol-h p{margin:4px 0 0;font-size:12.5px;color:var(--muted)}
 .kcol-h .kcol-tot{color:var(--fg);font-size:13px}
-.kcol-b{padding:0 10px 12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:60px}
+.kcol-b{padding:2px 10px 12px;display:flex;flex-direction:column;gap:10px;min-height:60px}
 .kvazio{margin:6px 4px;font-size:13px;color:var(--muted)}
 .k-rec{--kc:var(--sage)} .k-pagar{--kc:var(--blue)} .k-pagas{--kc:#7C8B97} .k-venc{--kc:var(--danger)}
 .kcol .kdot{background:var(--kc)}
 .kc{position:relative;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 2px rgba(23,33,43,.04)}
-.kc::before{content:"";position:absolute;left:14px;top:0;width:34px;height:4px;border-radius:0 0 4px 4px;background:var(--kc)}
-.kc-t{font-weight:700;font-size:14px;line-height:1.3;text-transform:uppercase;letter-spacing:.01em;overflow-wrap:anywhere;margin-top:2px}
+.kc::before{content:"";display:block;width:34px;height:4px;border-radius:4px;background:var(--kc);margin-bottom:2px}
+.kc-t{font-weight:700;font-size:14px;line-height:1.3;text-transform:uppercase;letter-spacing:.01em;overflow-wrap:anywhere}
 .kc-m,.kc-i{font-size:12.5px;color:var(--muted)}
 .kc-s{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .kc-dt{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-variant-numeric:tabular-nums}
@@ -751,5 +751,5 @@ input[type=checkbox]{accent-color:var(--blue);width:17px;height:17px}
 .kc-v{font-family:var(--f-display);font-size:21px;font-weight:500;letter-spacing:-.01em}
 .kc-ops{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
 .kc-ops .btn.sm{padding:4px 10px}
-@media (max-width:1199px){.quadro{grid-template-columns:repeat(2,minmax(0,1fr))}.kcol{max-height:none}}
-@media (max-width:700px){.quadro{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:12px;margin:0 -16px;padding:0 16px 8px}.kcol{flex:0 0 86%;scroll-snap-align:start;max-height:none}}
+@media (max-width:1199px){.quadro{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:700px){.quadro{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:12px;margin:0 -16px;padding:0 16px 8px}.kcol{flex:0 0 86%;scroll-snap-align:start}}

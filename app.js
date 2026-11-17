@@ -339,7 +339,8 @@ function cardDesp(d){
     <div class="kc-t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div>
     <div class="kc-m">${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</div>
     <div class="kc-s">${status}${chipData(data, s==='atrasada')}${atraso>0?`<span class="kc-atraso">há ${atraso} ${atraso>1?'dias':'dia'}</span>`:''}</div>
-    <div class="kc-v num">${money(valorLiq(d))}</div>
+    <div class="kc-v num">${money(d.valor)}</div>
+    ${valorEstornado(d.id)?`<div class="kc-i"><span class="pill paga">Estornado ${money(valorEstornado(d.id))}</span></div>`:''}
     ${info.length?`<div class="kc-i">${info.map(esc).join(' · ')}</div>`:''}
     <div class="kc-ops">${ops.join('')}</div></article>`;
 }

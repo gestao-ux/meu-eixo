@@ -89,6 +89,10 @@ main{min-width:0;display:flex;flex-direction:column}
 .kpi .lbl{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .kpi .val{font-family:var(--f-display);font-size:26px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .kpi .sub{font-size:13px;color:var(--muted)}
+/* Receitas e Despesas do mês: só o valor, em destaque (receita = prevista − despesas pagas; despesa = o que falta pagar) */
+.kpi.destaque{justify-content:center}
+.kpi.destaque .val{font-size:34px}
+@media (min-width:1600px){.kpi.destaque .val{font-size:38px}}
 .kpi.hero{background:var(--blue-soft)}
 .kpi.hero .val{color:var(--blue);font-size:32px}
 .pos{color:var(--sage)} .neg{color:var(--danger)}

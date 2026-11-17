@@ -393,6 +393,38 @@ function vQuadro(ym){
   </div>`;
 }
 
+/* ---------- painel do mês: Hoje (realizado) e Até o fim do mês (previsto) ---------- */
+function painelMes(ym){
+  const rs=resumo(ym), recebi=r2(rs.recReal), paguei=r2(rs.despPaga), sobraHoje=r2(recebi-paguei);
+  const aReceber=rs.R.filter(r=>sitRec(r)!=='recebida'&&r.situacao!=='cancelada').sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
+  const vaiEntrar=r2(rs.recEsp-rs.recReal), faltaPagar=r2(rs.despTot-rs.despPaga), sobraFim=r2(sobraHoje+vaiEntrar-faltaPagar);
+  const nPagas=rs.D.length-rs.pend.length, usado=rs.recEsp?Math.round(paguei/rs.recEsp*100):0, comprometido=rs.recEsp?Math.round(rs.despTot/rs.recEsp*100):0;
+  const proxPag=rs.pend.filter(d=>d.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))[0];
+  const nr=(n,u,p)=>`${n} ${n===1?u:p}`, neg=v=>v<0?'neg':'';
+  const cel=(lbl,v,sub,cls='')=>`<div class="pm-c ${cls}"><span class="lbl">${lbl}</span><b class="num ${cls.includes('res')?neg(v)||'pos':cls.includes('in')?'pos':''}">${money(v)}</b><span class="sub">${sub}</span></div>`;
+  const [Y,M]=ym.split('-').map(Number), fim=dataCurta(ym+'-'+String(new Date(Y,M,0).getDate()).padStart(2,'0'));
+  return `<div class="pm">
+    <section class="pm-b"><header><span class="pm-tag real">Hoje</span><span class="pm-h">o que já aconteceu</span></header>
+      <div class="pm-eq">
+        ${cel('Já recebi',recebi,nr(rs.R.length-aReceber.length,'receita','receitas'),'in')}<i class="op" aria-hidden="true">−</i>
+        ${cel('Já paguei',paguei,`${nr(nPagas,'conta','contas')} · ${usado}% da receita`)}<i class="op" aria-hidden="true">=</i>
+        ${cel('Sobra hoje',sobraHoje,'em mãos agora','res')}
+      </div></section>
+    <section class="pm-b fut"><header><span class="pm-tag fut">Até ${fim}</span><span class="pm-h">o que ainda vai acontecer</span></header>
+      <div class="pm-eq">
+        ${cel('Vai entrar',vaiEntrar,aReceber.length?`${nr(aReceber.length,'receita','receitas')} · próxima ${dataCurta(aReceber[0].dataPrevista)}`:'nada a receber','in')}<i class="op" aria-hidden="true">−</i>
+        ${cel('Falta pagar',faltaPagar,rs.pend.length?`${nr(rs.pend.length,'conta','contas')}${proxPag?` · próxima ${dataCurta(proxPag.vencimento)}`:''}`:'tudo pago')}<i class="op" aria-hidden="true">=</i>
+        ${cel('Sobra no fim do mês',sobraFim,'sobra hoje + entradas − contas','res')}
+      </div></section>
+    <div class="pm-tot"><span class="pm-tl">Mês completo</span>
+      <span>Receita total <b class="num pos">${money(rs.recEsp)}</b></span><i aria-hidden="true">−</i>
+      <span>Despesa total <b class="num">${money(rs.despTot)}</b></span><i aria-hidden="true">=</i>
+      <span>Sobra final <b class="num ${neg(sobraFim)||'pos'}">${money(sobraFim)}</b></span>
+      <span class="pm-uso"><span class="pm-bar" role="img" aria-label="${comprometido}% da receita comprometida com despesas"><i style="width:${Math.min(100,usado)}%"></i><i class="prev" style="width:${Math.max(0,Math.min(100,comprometido)-Math.min(100,usado))}%"></i></span><small>${usado}% usado · ${comprometido}% comprometido</small></span>
+    </div>
+  </div>`;
+}
+
 /* ---------- telas ---------- */
 function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
@@ -401,12 +433,7 @@ function vFinanceiro(){
   const isD=false, isM=false, isQ=true; /* Lançamentos mostra só o Quadro */
   return `${blocoConferir()}
   ${faixaContas()}
-  <div class="kpis">
-    <div class="kpi"><span class="lbl">Receitas</span><span class="val pos">${money(rs.recEsp)}</span><span class="sub">${money(rs.recReal)} recebidos</span></div>
-    <div class="kpi"><span class="lbl">Total despesas</span><span class="val">${money(rs.despTot)}</span><span class="sub">${rs.D.length} ${rs.D.length===1?'lançamento':'lançamentos'}</span></div>
-    <div class="kpi"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span><span class="sub">${rs.D.length-rs.pend.length} ${rs.D.length-rs.pend.length===1?'paga':'pagas'}</span></div>
-    <div class="kpi"><span class="lbl">Despesas pendentes</span><span class="val ${rs.pend.length?'':''}">${money(r2(rs.despTot-rs.despPaga))}</span><span class="sub">${rs.pend.length} ${rs.pend.length===1?'pendente':'pendentes'}</span></div>
-  </div>
+  ${painelMes(ym)}
   <section>
     ${isQ?`<div class="section-head"><p>Receitas e despesas de ${esc(mesLabel(ym))} em colunas. Ao marcar como pago ou recebido, o cartão muda de coluna.</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Novo lançamento</button></div></div>${vQuadro(ym)}`:isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
     <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
@@ -1609,14 +1636,7 @@ function vInicio(){
     <div class="h2-calc">${rc?`<span>Início do ciclo ${money(rc.saldoIni)}</span><span>+ ${money(rc.entradas)} entradas</span><span>− ${money(rc.pagos)} pagos</span>${Math.abs(rc.outros)>=0.01?`<span>${rc.outros>0?'+':'−'} ${money(Math.abs(rc.outros))} outros movimentos</span>`:''}<span>= ${money(dp.saldo)} hoje</span>`:`<span>${money(dp.saldo)} em conta</span>`}<span>− ${money(dp.c.contas)} em ${dp.c.D.length} ${dp.c.D.length===1?'conta':'contas'} até ${dataCurta(dp.lim)}</span>${dp.c.F.length?`<span>− ${money(dp.c.faturas)} em ${dp.c.F.length===1?'fatura':'faturas'}</span>`:''}${dp.entraEv?`<span>+ ${money(dp.entraEv)} entradas eventuais previstas</span>`:''}<span>= <b>${money(dp.livre)}</b> disponível</span></div>
   </section>`; })():''}
   <section><div class="section-head"><h2>${ym===atual?'Este mês':mesLabel(ym)}</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
-    <div class="kpis seis">
-      <div class="kpi"><span class="lbl">Receita total</span><span class="val pos">${money(rs.recEsp)}</span></div>
-      <div class="kpi"><span class="lbl">Despesa total</span><span class="val">${money(rs.despTot)}</span></div>
-      <div class="kpi"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span></div>
-      <div class="kpi"><span class="lbl">Despesas pendentes</span><span class="val">${money(r2(rs.despTot-rs.despPaga))}</span></div>
-      <div class="kpi"><span class="lbl">Sobra</span><span class="val ${rs.saldoReal<0?'neg':'pos'}">${money(rs.saldoReal)}</span></div>
-      <div class="kpi"><span class="lbl">Entradas pendentes</span><span class="val">${money(r2(rs.recEsp-rs.recReal))}</span></div>
-    </div></section>
+    ${painelMes(ym)}</section>
   <div class="grid2">
     <section class="panel"><h3>Alertas</h3>${al.length?`<div class="alerts">${al.map(x=>`<div class="alert ${x.k}"><span class="dot"></span><div><p>${x.t}</p><p class="hint">${x.h}</p></div></div>`).join('')}</div>`:`<div class="alert ok"><span class="dot"></span><div><p>Nada exige atenção agora.</p><p class="hint">Os alertas aparecem quando contas e faturas vencem, períodos ficam apertados ou orçamentos chegam perto do limite.</p></div></div>`}</section>
     <section class="panel"><h3>Próximos vencimentos</h3>${prox.length?`<div class="list">${prox.map(d=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="t">${esc(d.descricao)}</div><div class="meta"><span>${dataBR(d.vencimento)}</span>${pillE(d.entradaId)}</div></div><div class="v">${money(d.valor)}</div></div>`).join('')}</div>`:`<p class="muted small">Nenhuma conta pendente a vencer.</p>`}</section>

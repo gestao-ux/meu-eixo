@@ -1242,7 +1242,7 @@ function faixaContas(){
   if(S.contasErro) return `<div class="alert warn"><span class="dot"></span><div><p>Para usar contas, transferências e estornos, execute a atualização <b>011_contas_movimentacoes.sql</b> no Supabase (SQL Editor).</p></div></div>`;
   if(!temContas()) return '';
   const cs=contasAtivas();
-  if(!cs.length) return `<section class="contas-faixa vazia"><div><b>Cadastre suas contas</b><span class="small muted">Banco, poupança, carteira: com o saldo de cada uma, o Meu Eixo mostra quanto você tem hoje.</span></div><button class="btn sm primary" data-act="novaConta">${icon(I.plus)}Nova conta</button></section>`;
+  if(!cs.length) return '';
   return `<section class="contas-faixa"><div class="cf-total"><span class="lbl">Saldo em conta</span><b class="num">${money(saldoEmConta())}</b><span class="small muted">hoje, somando ${cs.length} ${cs.length>1?'contas':'conta'}</span></div>
     <div class="cf-lista">${cs.map(c=>{ const s=saldoConta(c); return `<button type="button" class="cf-item" data-act="editConta" data-id="${c.id}"><span class="small muted">${esc(c.nome)}${c.padrao&&!/principal/i.test(c.nome)&&contasAtivas().length>1?' · principal':''}</span><b class="num ${s<0?'neg':''}">${money(s)}</b></button>`; }).join('')}
     <button type="button" class="cf-item cf-add" data-act="novaConta" aria-label="Nova conta">${icon(I.plus)}<span class="small">Conta</span></button></div></section>`;

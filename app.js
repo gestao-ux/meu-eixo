@@ -1611,7 +1611,9 @@ function vInicio(){
   <section><div class="section-head"><h2>${ym===atual?'Este mês':mesLabel(ym)}</h2><p>${esc(espAtual()?.nome||'')} · ${mesLabel(ym)}</p></div>
     <div class="kpis">
       <div class="kpi destaque"><span class="lbl">Receitas do mês</span><span class="val ${rs.recEsp-rs.despPaga<0?'neg':'pos'}">${money(r2(rs.recEsp-rs.despPaga))}</span></div>
-      <div class="kpi destaque"><span class="lbl">Despesas do mês</span><span class="val">${money(r2(rs.despTot-rs.despPaga))}</span></div>
+      <div class="kpi destaque"><span class="lbl">Total despesas</span><span class="val">${money(rs.despTot)}</span></div>
+      <div class="kpi destaque"><span class="lbl">Despesas pagas</span><span class="val">${money(rs.despPaga)}</span></div>
+      <div class="kpi destaque"><span class="lbl">Despesas pendentes</span><span class="val">${money(r2(rs.despTot-rs.despPaga))}</span></div>
       <div class="kpi"><span class="lbl">Contas vencidas</span><span class="val ${venc.length||fVenc.length?'neg':''}">${money(r2(sum(venc,valorLiq)+fVenc.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${venc.length+fVenc.length?`${venc.length+fVenc.length} ${venc.length+fVenc.length>1?'itens':'item'} sem pagamento`:'nenhuma'}</span></div>
       ${temCartoes()&&cartoesAtivos().length?`<div class="kpi"><span class="lbl">Faturas em aberto</span><span class="val">${money(r2(fAbertas.reduce((a,f)=>a+f.resta,0)))}</span><span class="sub">${fAbertas.length?(f0=>f0.venc<h?`vencida desde ${dataCurta(f0.venc)}`:`próxima vence ${dataCurta(f0.venc)}`)([...fAbertas].sort((a,b)=>a.venc.localeCompare(b.venc))[0]):'nada a pagar'}</span></div>`:''}
       <div class="kpi"><span class="lbl">Comprometido até ${dataCurta(fimMes(atual))}</span><span class="val">${money(comp.total)}</span><span class="sub">contas e faturas ainda a pagar</span></div>

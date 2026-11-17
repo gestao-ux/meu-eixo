@@ -331,6 +331,7 @@ function cardDesp(d){
     ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`); }
   if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="despesas" data-id="${d.id}" aria-label="Excluir" title="Excluir">${icon(I.trash)}</button>`);
   const data = s==='paga' ? (d.dataPagamento||d.vencimento) : d.vencimento;
   const atraso = s==='atrasada' ? diasEntre(d.vencimento,h) : 0;
   const status = s==='paga'?'<span class="pill paga">Pago</span>':s==='atrasada'?'<span class="pill atrasada">Vencido</span>':s==='prevista'?'<span class="pill prevista">Programado</span>':'<span class="pill pendente">A pagar</span>';
@@ -359,6 +360,7 @@ function cardRec(r){
   if(s!=='recebida') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
   if(r.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(r.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
   ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="excluir" data-col="receitas" data-id="${r.id}" aria-label="Excluir" title="Excluir">${icon(I.trash)}</button>`);
   const status = s==='recebida'?'<span class="pill recebida">Recebido</span>':s==='atrasada'?'<span class="pill atrasada">Atrasado</span>':'<span class="pill pendente">A receber</span>';
   const val = s==='recebida' ? r.valorRecebido : r.valorPrevisto;
   return `<article class="kc">

@@ -396,7 +396,7 @@ function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
   if(f.sit.length) D=D.filter(d=>f.sit.includes(sitDesp(d))); if(f.cat.length) D=D.filter(d=>f.cat.includes(d.categoria||''));
   D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
-  const isD=S.tab==='despesas', isM=S.tab==='movimentacoes', isQ=S.tab==='quadro';
+  const isD=false, isM=false, isQ=true; /* Lançamentos mostra só o Quadro */
   return `${blocoConferir()}
   ${faixaContas()}
   <div class="kpis">
@@ -405,7 +405,6 @@ function vFinanceiro(){
     <div class="kpi"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">realizado até agora ${money(rs.saldoReal)}</span></div>
   </div>
   <section>
-    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isQ}" data-act="tab" data-v="quadro">Quadro</button><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${S.tab==='receitas'}" data-act="tab" data-v="receitas">Receitas (${R.length})</button>${temContas()||S.contasErro?`<button role="tab" aria-selected="${isM}" data-act="tab" data-v="movimentacoes">Movimentações</button>`:''}</div>
     ${isQ?`<div class="section-head"><p>Receitas e despesas de ${esc(mesLabel(ym))} em colunas. Ao marcar como pago ou recebido, o cartão muda de coluna.</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Novo lançamento</button></div></div>${vQuadro(ym)}`:isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
     <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
     ${isD?`<div class="filters">

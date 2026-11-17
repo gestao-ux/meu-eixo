@@ -49,7 +49,7 @@ const TABELAS = { receitas:'id', despesas:'id', categorias:'id', recorrencias:'i
 
 /* ---------- estado ---------- */
 const S = { rec:[], desp:[], cats:[], recor:[], orc:{}, cfg:{}, espacos:[], esp:null, user:null, perfil:null,
-  mes:hoje().slice(0,7), view:'inicio', tab:'despesas', filtro:{sit:[],cat:[]}, fase:'iniciando', auth:'login', authMsg:'', canal:null, membros:null };
+  mes:hoje().slice(0,7), view:'inicio', tab:'quadro', filtro:{sit:[],cat:[]}, fase:'iniciando', auth:'login', authMsg:'', canal:null, membros:null };
 
 const NAV = [
   {id:'inicio',t:'Início',ic:'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10'},
@@ -205,7 +205,7 @@ function sairLocal(){ if(S.canal){ sb.removeChannel(S.canal); S.canal=null; } Ob
 /* ---------- render ---------- */
 let pend=false; function schedule(){ if(pend) return; pend=true; requestAnimationFrame(()=>{pend=false; render();}); }
 const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
-const I = { plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11', clip:'M20 11.5 12.2 19.3a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7.1', foto:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' };
+const I = { cal:'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4', plus:'M12 5v14M5 12h14', check:'M5 12.5 10 17l9-10', edit:'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', trash:'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13', down:'M12 4v12M6 11l6 6 6-6M5 20h14', copy:'M8 8h11v11H8zM5 16V5h11', clip:'M20 11.5 12.2 19.3a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7.1', foto:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' };
 const logo = `<img src="icone.svg" width="56" height="56" alt="">`;
 /* personalização: nome no perfil; frase e cor guardadas na conta */
 const CORES_AV = {salvia:['Sálvia','#4F8468'],azul:['Azul','#22446A'],terracota:['Terracota','#B4654A'],petroleo:['Petróleo','#1F6F78'],ameixa:['Ameixa','#7A4F6D'],grafite:['Grafite','#3F4A55']};
@@ -322,12 +322,80 @@ function rowRec(r,o={}){
 }
 const linha = (a,b) => `<div class="row" style="grid-template-columns:1fr auto"><span>${a}</span><b class="num">${b}</b></div>`;
 
+/* ---------- quadro de lançamentos (colunas) ---------- */
+function chipData(d, alerta){ return `<span class="kc-dt ${alerta?'alerta':''}">${icon(I.cal)}${dataBR(d)}</span>`; }
+function cardDesp(d){
+  const s=sitDesp(d), h=hoje(), pix=d.pixCopiaCola||d.chavePix, grupo=(+d.parcelas||1)>1, ops=[];
+  if(d.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="despesas" data-id="${d.id}">${icon(I.check)}Conferido</button>`);
+  if(s!=='paga'){ if(pix) ops.push(`<button class="btn sm pixbtn" data-act="copiarPix" data-id="${d.id}" title="${esc(d.chavePix||'Pix copia e cola')}">${icon(I.copy)}Pix</button>`);
+    ops.push(`<button class="btn sm sage" data-act="pagar" data-id="${d.id}">${icon(I.check)}Pago</button>`); }
+  if(d.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(d.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="editar" data-col="despesas" data-id="${d.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  const data = s==='paga' ? (d.dataPagamento||d.vencimento) : d.vencimento;
+  const atraso = s==='atrasada' ? diasEntre(d.vencimento,h) : 0;
+  const status = s==='paga'?'<span class="pill paga">Pago</span>':s==='atrasada'?'<span class="pill atrasada">Vencido</span>':s==='prevista'?'<span class="pill prevista">Programado</span>':'<span class="pill pendente">A pagar</span>';
+  const info = [d.formaPagamento, contasAtivas().length>1&&contaDe(d)?contaNome(contaDe(d)):'', grupo?`Parcela ${d.parcelaAtual} de ${d.parcelas}`:(d.recorrenciaId||d.comportamento==='fixa'?'Fixa':'')].filter(Boolean);
+  return `<article class="kc">
+    <div class="kc-t">${esc(d.descricao)}${d.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div>
+    <div class="kc-m">${esc(catNome(d.categoria))}${d.subcategoria?' · '+esc(d.subcategoria):''}</div>
+    <div class="kc-s">${status}${chipData(data, s==='atrasada')}${atraso>0?`<span class="kc-atraso">há ${atraso} ${atraso>1?'dias':'dia'}</span>`:''}</div>
+    <div class="kc-v num">${money(valorLiq(d))}</div>
+    ${info.length?`<div class="kc-i">${info.map(esc).join(' · ')}</div>`:''}
+    <div class="kc-ops">${ops.join('')}</div></article>`;
+}
+function cardFatura(f){
+  const venc=f.status==='vencida' || f.venc<hoje(), atraso=venc?diasEntre(f.venc,hoje()):0;
+  return `<article class="kc">
+    <div class="kc-t">Fatura ${esc(f.cartao.nome)}</div>
+    <div class="kc-m">Cartão · fatura de ${esc(mesLabel(f.fat))}</div>
+    <div class="kc-s">${venc?'<span class="pill atrasada">Vencida</span>':'<span class="pill crt">Fatura</span>'}${chipData(f.venc, venc)}${atraso>0?`<span class="kc-atraso">há ${atraso} ${atraso>1?'dias':'dia'}</span>`:''}</div>
+    <div class="kc-v num">${money(f.resta)}</div>
+    <div class="kc-ops"><button class="btn sm sage" data-act="pagarFatura" data-id="${f.cartao.id}" data-v="${f.fat}">${icon(I.check)}Pagar fatura</button></div></article>`;
+}
+function cardRec(r){
+  const s=sitRec(r), ops=[], data=s==='recebida'?(r.dataEfetiva||r.dataPrevista):r.dataPrevista;
+  if(r.conferido===false) ops.push(`<button class="btn sm conf" data-act="conferir" data-col="receitas" data-id="${r.id}">${icon(I.check)}Conferido</button>`);
+  if(s!=='recebida') ops.push(`<button class="btn sm sage" data-act="receber" data-id="${r.id}">${icon(I.check)}Recebido</button>`);
+  if(r.comprovante) ops.push(`<button class="btn sm ghost" data-act="verComp" data-path="${esc(r.comprovante)}" aria-label="Ver comprovante" title="Ver comprovante">${icon(I.clip)}</button>`);
+  ops.push(`<button class="btn sm ghost" data-act="editar" data-col="receitas" data-id="${r.id}" aria-label="Editar">${icon(I.edit)}</button>`);
+  const status = s==='recebida'?'<span class="pill recebida">Recebido</span>':s==='atrasada'?'<span class="pill atrasada">Atrasado</span>':'<span class="pill pendente">A receber</span>';
+  const val = s==='recebida' ? r.valorRecebido : r.valorPrevisto;
+  return `<article class="kc">
+    <div class="kc-t">${esc(r.descricao)}${r.conferido===false?' <span class="pill conferir">A conferir</span>':''}</div>
+    <div class="kc-m">${esc(r.origem||'Receita')}${r.recorrenciaId?' · todo mês':''}</div>
+    <div class="kc-s">${status}${chipData(data, s==='atrasada')}</div>
+    <div class="kc-v num pos">${money(val)}</div>
+    ${s==='recebida'&&r2(r.valorRecebido)!==r2(r.valorPrevisto)?`<div class="kc-i">previsto ${money(r.valorPrevisto)}</div>`:''}
+    <div class="kc-ops">${ops.join('')}</div></article>`;
+}
+function vQuadro(ym){
+  const h=hoje(), fimYm=addMes(ym,1)+'-01', porData=k=>(a,b)=>(k(a)||'').localeCompare(k(b)||'');
+  const R=recMes(ym).filter(r=>r.situacao!=='cancelada').sort(porData(r=>sitRec(r)==='recebida'?(r.dataEfetiva||r.dataPrevista):r.dataPrevista));
+  const D=despMes(ym).filter(d=>ativa(d)&&!d.cartaoId);
+  const aPagar=D.filter(d=>['pendente','prevista'].includes(sitDesp(d))).sort(porData(d=>d.vencimento));
+  const pagas=D.filter(d=>sitDesp(d)==='paga').sort(porData(d=>d.dataPagamento||d.vencimento));
+  const vencidas=S.desp.filter(d=>ativa(d)&&!d.cartaoId&&sitDesp(d)==='atrasada'&&d.vencimento<fimYm).sort(porData(d=>d.vencimento));
+  const fat=faturasAPagar(), fVenc=fat.filter(f=>f.venc<h&&f.venc<fimYm), fPagar=fat.filter(f=>f.venc>=h&&f.venc.slice(0,7)===ym);
+  const itensPagar=[...aPagar.map(d=>({k:d.vencimento,h:cardDesp(d),v:valorLiq(d)})),...fPagar.map(f=>({k:f.venc,h:cardFatura(f),v:f.resta}))].sort((a,b)=>(a.k||'').localeCompare(b.k||''));
+  const itensVenc=[...vencidas.map(d=>({k:d.vencimento,h:cardDesp(d),v:valorLiq(d)})),...fVenc.map(f=>({k:f.venc,h:cardFatura(f),v:f.resta}))].sort((a,b)=>(a.k||'').localeCompare(b.k||''));
+  const recTot=r2(sum(R,r=>sitRec(r)==='recebida'?r.valorRecebido:r.valorPrevisto)), recJa=r2(sum(R.filter(r=>sitRec(r)==='recebida'),r=>r.valorRecebido));
+  const col=(cls,t,sub,itens,total,extra,vazio)=>`<section class="kcol ${cls}" aria-label="${esc(t)}">
+    <header class="kcol-h"><div class="kcol-tt"><i class="kdot"></i><h3>${t}</h3><span class="kcount">${itens.length}</span></div><p>${sub}</p><p class="kcol-tot">Total <b class="num">${money(total)}</b>${extra||''}</p></header>
+    <div class="kcol-b">${itens.length?itens.join(''):`<p class="kvazio">${vazio}</p>`}</div></section>`;
+  return `<div class="quadro">
+    ${col('k-rec','Receitas','pela data de recebimento',R.map(cardRec),recTot,recJa?` <span class="muted">· ${money(recJa)} recebido</span>`:'','Nenhuma receita neste mês.')}
+    ${col('k-pagar','A pagar','pela data de pagamento',itensPagar.map(x=>x.h),r2(itensPagar.reduce((a,x)=>a+x.v,0)),'','Nada a pagar neste mês.')}
+    ${col('k-pagas','Pagas','pela data de pagamento',pagas.map(cardDesp),r2(sum(pagas,valorLiq)),'','Nenhuma despesa paga ainda.')}
+    ${col('k-venc','Vencidas','pela data de vencimento',itensVenc.map(x=>x.h),r2(itensVenc.reduce((a,x)=>a+x.v,0)),'','Nenhuma conta vencida.')}
+  </div>`;
+}
+
 /* ---------- telas ---------- */
 function vFinanceiro(){
   const ym=S.mes, rs=resumo(ym), f=S.filtro; let D=despMes(ym), R=recMes(ym);
   if(f.sit.length) D=D.filter(d=>f.sit.includes(sitDesp(d))); if(f.cat.length) D=D.filter(d=>f.cat.includes(d.categoria||''));
   D.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||'')); R.sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
-  const isD=S.tab==='despesas', isM=S.tab==='movimentacoes';
+  const isD=S.tab==='despesas', isM=S.tab==='movimentacoes', isQ=S.tab==='quadro';
   return `${blocoConferir()}
   ${faixaContas()}
   <div class="kpis">
@@ -336,8 +404,8 @@ function vFinanceiro(){
     <div class="kpi"><span class="lbl">Saldo previsto</span><span class="val ${rs.saldoPrev<0?'neg':''}">${money(rs.saldoPrev)}</span><span class="sub">realizado até agora ${money(rs.saldoReal)}</span></div>
   </div>
   <section>
-    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${S.tab==='receitas'}" data-act="tab" data-v="receitas">Receitas (${R.length})</button>${temContas()||S.contasErro?`<button role="tab" aria-selected="${isM}" data-act="tab" data-v="movimentacoes">Movimentações</button>`:''}</div>
-    ${isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
+    <div class="tabs" role="tablist"><button role="tab" aria-selected="${isQ}" data-act="tab" data-v="quadro">Quadro</button><button role="tab" aria-selected="${isD}" data-act="tab" data-v="despesas">Despesas (${despMes(ym).length})</button><button role="tab" aria-selected="${S.tab==='receitas'}" data-act="tab" data-v="receitas">Receitas (${R.length})</button>${temContas()||S.contasErro?`<button role="tab" aria-selected="${isM}" data-act="tab" data-v="movimentacoes">Movimentações</button>`:''}</div>
+    ${isQ?`<div class="section-head"><p>Receitas e despesas de ${esc(mesLabel(ym))} em colunas. Ao marcar como pago ou recebido, o cartão muda de coluna.</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="despesa">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="despesa">${icon(I.plus)}Novo lançamento</button></div></div>${vQuadro(ym)}`:isM?`<div class="section-head"><p>Transferências entre contas, ajustes de saldo e estornos.</p><div class="right">${temContas()?`<button class="btn primary" data-act="novo" data-tipo="transferencia">${icon(I.plus)}Nova movimentação</button>`:''}</div></div>${vMovimentacoes(ym)}`:`
     <div class="section-head"><p>${isD?'Contas do mês pela data de vencimento.':'Recebimentos do mês pela data prevista.'}</p><div class="right"><button class="btn" data-act="enviarComprovante" data-tipo="${isD?'despesa':'receita'}">${icon(I.clip)}Enviar comprovante</button><button class="btn primary" data-act="novo" data-tipo="${isD?'despesa':'receita'}">${icon(I.plus)}Novo lançamento</button></div></div>
     ${isD?`<div class="filters">
       <div class="field"><label for="fSit">Situação</label><select id="fSit" data-chg="fsit" multiple data-vazio="Todas">${Object.entries(SIT_D).map(([k,v])=>`<option value="${k}" ${f.sit.includes(k)?'selected':''}>${v}</option>`).join('')}</select></div>

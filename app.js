@@ -373,7 +373,7 @@ function cardRec(r){
 }
 function vQuadro(ym){
   const h=hoje(), fimYm=addMes(ym,1)+'-01', porData=k=>(a,b)=>(k(a)||'').localeCompare(k(b)||'');
-  const R=recMes(ym).filter(r=>r.situacao!=='cancelada').sort(porData(r=>sitRec(r)==='recebida'?(r.dataEfetiva||r.dataPrevista):r.dataPrevista));
+  const R=recMes(ym).filter(r=>r.situacao!=='cancelada').sort((a,b)=>((sitRec(a)==='recebida')-(sitRec(b)==='recebida')) || porData(r=>sitRec(r)==='recebida'?(r.dataEfetiva||r.dataPrevista):r.dataPrevista)(a,b)); /* a receber no topo, recebidas embaixo */
   const D=despMes(ym).filter(d=>ativa(d)&&!d.cartaoId);
   const aPagar=D.filter(d=>['pendente','prevista'].includes(sitDesp(d))).sort(porData(d=>d.vencimento));
   const pagas=D.filter(d=>sitDesp(d)==='paga').sort(porData(d=>d.dataPagamento||d.vencimento));

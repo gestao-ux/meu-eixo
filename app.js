@@ -395,9 +395,10 @@ function vQuadro(ym){
 
 /* ---------- painel do mês: Hoje (realizado) e Até o fim do mês (previsto) ---------- */
 function painelMes(ym){
-  const rs=resumo(ym), recebi=r2(rs.recReal), paguei=r2(rs.despPaga), sobraHoje=r2(recebi-paguei);
+  /* despesas pelo valor líquido (já descontado o estorno), para pago + a pagar = total */
+  const rs=resumo(ym), recebi=r2(rs.recReal), paguei=r2(sum(rs.D.filter(d=>d.situacao==='paga'),valorLiq)), sobraHoje=r2(recebi-paguei);
   const aReceber=rs.R.filter(r=>sitRec(r)!=='recebida'&&r.situacao!=='cancelada').sort((a,b)=>(a.dataPrevista||'').localeCompare(b.dataPrevista||''));
-  const vaiEntrar=r2(rs.recEsp-rs.recReal), faltaPagar=r2(rs.despTot-rs.despPaga), sobraFim=r2(sobraHoje+vaiEntrar-faltaPagar);
+  const vaiEntrar=r2(rs.recEsp-rs.recReal), faltaPagar=r2(Math.max(0,sum(rs.pend,valorLiq))), sobraFim=r2(sobraHoje+vaiEntrar-faltaPagar);
   const nPagas=rs.D.length-rs.pend.length, usado=rs.recEsp?Math.round(paguei/rs.recEsp*100):0, comprometido=rs.recEsp?Math.round(rs.despTot/rs.recEsp*100):0;
   const proxPag=rs.pend.filter(d=>d.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))[0];
   const nr=(n,u,p)=>`${n} ${n===1?u:p}`, neg=v=>v<0?'neg':'';
